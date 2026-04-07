@@ -86,6 +86,25 @@ TEBAKAN_LIST = [
     {"soal": "Terbalik tetap sama. Apa itu?", "jawaban": "angka 8", "reward": 30},
 ]
 
+JAWABAN_BENAR_GAUL = [
+    "GOKIL LO BRO! Tepat banget, lo emang jago sih! 🔥",
+    "YAAMPUN BENERRRR!!! Otaknya encer banget sih wkwkwk 🧠💥",
+    "MANTAP JIWA! Lo jawab beneran bro, gaskeun! 🚀",
+    "GILAAAK BENER! Lo tuh emang sultan otak ya bestie ✨",
+    "SABI BANGET! Jawaban lo pas banget, auto sultan nih! 💯",
+    "WOOO BENERRR! Gila sih lo, padahal susah kan? Keren abis! 🎉",
+    "ANJIRR BENER! Lo pinter banget sih, respect bro! 👏",
+    "GAS POLLLL! Jawaban lo bener, lo emang the best! 🏆",
+    "DAGING BANGET! Bener semua, lo emang ga ada lawan! 💪",
+    "KEREN ABIS BRO! Gw kagum sama lo, jawaban lo tepat sasaran! 🎯",
+]
+
+def get_custom_tebakan():
+    return load_json("custom_tebakan.json", [])
+
+def save_custom_tebakan(data):
+    save_json("custom_tebakan.json", data)
+
 # ===================== AI CHAT =====================
 import urllib.request
 import urllib.parse
@@ -95,8 +114,8 @@ async def get_ai_response(question: str) -> str:
     try:
         import urllib.request, json as _json
         payload = _json.dumps({
-            "model": "claude-sonnet-4-20250514",
-            "max_tokens": 300,
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 500,
             "system": (
                 "Lo adalah RepublikDooms AI, bot Discord gaul dan nyantai. "
                 "Jawab pake bahasa Indonesia gaul, singkat, informatif, dan asik. "
@@ -232,17 +251,21 @@ async def on_message(message):
     # Tebak-tebakan answer check
     if guild_id and guild_id in active_tebakan:
         tb = active_tebakan[guild_id]
-        if message.author.id != tb["asker"] and tb["jawaban"] in content_lower:
+        if message.author.id != tb["asker"] and tb["jawaban"].lower() in content_lower:
             udata = get_user_fishing(str(message.author.id))
             reward = tb["reward"]
             udata["coins"] += reward
             save_user_fishing(str(message.author.id), udata)
+            gaul_response = random.choice(JAWABAN_BENAR_GAUL)
             em = dark_red_embed(
-                "🎉 BENERRRR!!!",
-                f"**{message.author.display_name}** jawab bener! Dapet **{reward} koin** cuy!\n"
-                f"Jawaban: **{tb['jawaban'].title()}**\n"
-                f"Total koin lo sekarang: **{udata['coins']} 🪙**"
+                "🎉 BENERRR!!!",
+                f"{gaul_response}\n\n"
+                f"**{message.author.display_name}** jawab bener!\n"
+                f"💰 Dapet **+{reward} koin** cuy!\n"
+                f"✅ Jawaban: **{tb['jawaban'].title()}**\n"
+                f"🪙 Total koin lo: **{udata['coins']}**"
             )
+            em.set_thumbnail(url=message.author.display_avatar.url)
             await message.channel.send(embed=em)
             del active_tebakan[guild_id]
 
@@ -716,17 +739,70 @@ async def tebak(ctx):
     if gid in active_tebakan:
         await ctx.reply("⚠️ Masih ada tebakan yang belum kejawab bro! Jawab dulu yang itu.")
         return
-    soal = random.choice(TEBAKAN_LIST)
+    # Gabungkan soal default + custom
+    semua_soal = TEBAKAN_LIST + get_custom_tebakan()
+    soal = random.choice(semua_soal)
     active_tebakan[gid] = {
-        "jawaban": soal["jawaban"],
+        "jawaban": soal["jawaban"].lower(),
         "reward": soal["reward"],
         "asker": ctx.author.id
     }
     em = dark_red_embed(
         "🧠 TEBAK-TEBAKAN NIH!",
-        f"**Soal:**\n{soal['soal']}\n\n💡 Jawab di chat! Reward: **{soal['reward']} koin** buat yang bener!\n⚠️ Si penanya ga bisa menang ya."
+        f"**Soal:**\n{soal['soal']}\n\n"
+        f"💡 Jawab di chat! Reward: **{soal['reward']} koin** buat yang bener!\n"
+        f"⚠️ Si penanya ga bisa menang ya."
     )
     await ctx.send(embed=em)
+
+@bot.command(name="addtebak")
+@commands.has_permissions(administrator=True)
+async def addtebak_cmd(ctx, *, content: str = None):
+    """Format: !Doom addtebak Soal pertanyaan|jawaban|reward"""
+    if not content:
+        await ctx.reply("❓ Format: `!Doom addtebak Pertanyaan lo|jawaban|reward_koin`\nContoh: `!Doom addtebak Ibu kota Indonesia?|jakarta|50`")
+        return
+    parts = content.split("|")
+    if len(parts) < 2:
+        await ctx.reply("❌ Format salah! Harus ada soal dan jawaban dipisah `|`")
+        return
+    soal = parts[0].strip()
+    jawaban = parts[1].strip().lower()
+    reward = int(parts[2].strip()) if len(parts) > 2 and parts[2].strip().isdigit() else 25
+    custom = get_custom_tebakan()
+    custom.append({"soal": soal, "jawaban": jawaban, "reward": reward})
+    save_custom_tebakan(custom)
+    em = dark_red_embed(
+        "✅ Soal Tebakan Ditambah!",
+        f"**Soal:** {soal}\n**Jawaban:** {jawaban}\n**Reward:** {reward} koin\n\n"
+        f"Total soal custom: **{len(custom)}**"
+    )
+    await ctx.reply(embed=em)
+
+@bot.command(name="listtebak")
+async def listtebak_cmd(ctx):
+    custom = get_custom_tebakan()
+    if not custom:
+        await ctx.reply("📋 Belum ada soal tebakan custom. Tambah pake `!Doom addtebak`!")
+        return
+    lines = [f"{i+1}. {s['soal']} → **{s['jawaban']}** ({s['reward']} koin)" for i, s in enumerate(custom)]
+    em = dark_red_embed("📋 Soal Tebakan Custom", "\n".join(lines[:20]))
+    em.set_footer(text=f"Total: {len(custom)} soal custom | Default: {len(TEBAKAN_LIST)} soal")
+    await ctx.reply(embed=em)
+
+@bot.command(name="removetebak")
+@commands.has_permissions(administrator=True)
+async def removetebak_cmd(ctx, nomor: int = None):
+    if not nomor:
+        await ctx.reply("❓ Format: `!Doom removetebak [nomor]` — lihat nomor pake `!Doom listtebak`")
+        return
+    custom = get_custom_tebakan()
+    if nomor < 1 or nomor > len(custom):
+        await ctx.reply(f"❌ Nomor soal tidak valid! Soal custom ada {len(custom)}.")
+        return
+    removed = custom.pop(nomor - 1)
+    save_custom_tebakan(custom)
+    await ctx.reply(embed=dark_red_embed("🗑️ Soal Dihapus!", f"Soal **\"{removed['soal']}\"** berhasil dihapus!"))
 
 @bot.command(name="coins", aliases=["koin", "saldo"])
 async def check_coins(ctx):
@@ -751,12 +827,24 @@ async def warn(ctx, member: discord.Member = None, *, reason: str = "Gak ada ala
     warns[gid][uid].append({"reason": reason, "by": str(ctx.author.id), "time": time.time()})
     save_warns(warns)
     count = len(warns[gid][uid])
-    em = dark_red_embed("⚠️ Member Di-Warn!", f"**{member.display_name}** dapet warn!\n**Alasan:** {reason}\n**Total Warn:** {count}")
-    await ctx.send(embed=em)
+    dm_status = ""
     try:
-        await member.send(embed=dark_red_embed("⚠️ Lo Kena Warn!", f"Lo di-warn di **{ctx.guild.name}**\n**Alasan:** {reason}\n**Total Warn:** {count}"))
-    except:
-        pass
+        dm_em = dark_red_embed(
+            "⚠️ Lo Kena Warn!",
+            f"Lo di-warn di server **{ctx.guild.name}**\n**Alasan:** {reason}\n**Total Warn lo:** {count}\n\n⚠️ Hati-hati ya, jangan sampe nambah lagi!"
+        )
+        dm_em.set_footer(text=f"Warn oleh: {ctx.author.display_name}")
+        await member.send(embed=dm_em)
+        dm_status = "\n✅ Notifikasi DM berhasil dikirim."
+    except discord.Forbidden:
+        dm_status = "\n⚠️ Gagal kirim DM (member mungkin menonaktifkan DM dari server)."
+    except discord.HTTPException as e:
+        dm_status = f"\n⚠️ Gagal kirim DM: {str(e)[:60]}"
+    em = dark_red_embed(
+        "⚠️ Member Di-Warn!",
+        f"**{member.display_name}** dapet warn!\n**Alasan:** {reason}\n**Total Warn:** {count}{dm_status}"
+    )
+    await ctx.send(embed=em)
 
 @bot.command(name="warns")
 async def check_warns(ctx, member: discord.Member = None):
@@ -966,14 +1054,75 @@ async def giveaway_cmd(ctx, duration: str = None, *, prize: str = None):
 @commands.has_permissions(administrator=True)
 async def event_cmd(ctx, *, content: str = None):
     if not content:
-        await ctx.reply("❓ Format: `!Doom event Nama Event|Deskripsi|HH:MM`")
+        await ctx.reply(
+            "❓ Format: `!Doom event Nama Event|Deskripsi|HH:MM|#channel`\n"
+            "Contoh: `!Doom event Turnamen ML|Siap-siap gaskeun!|20:00|#announcement`\n"
+            "Channel opsional (default: channel saat ini)."
+        )
         return
     parts = content.split("|")
     name = parts[0].strip()
     desc = parts[1].strip() if len(parts) > 1 else "Event seru nih!"
-    start_time = parts[2].strip() if len(parts) > 2 else "Belum ditentukan"
-    em = dark_red_embed(f"📅 EVENT: {name}", f"{desc}\n\n⏰ **Jam Mulai:** {start_time}\n\n📢 Jangan sampe ketinggalan ya!")
-    await ctx.send(embed=em)
+    start_time_str = parts[2].strip() if len(parts) > 2 else "Belum ditentukan"
+
+    # Tentukan channel target
+    target_channel = ctx.channel
+    if len(parts) > 3 and ctx.message.channel_mentions:
+        target_channel = ctx.message.channel_mentions[0]
+    elif len(parts) > 3:
+        ch_name = parts[3].strip().replace("#", "")
+        found = discord.utils.get(ctx.guild.channels, name=ch_name)
+        if found:
+            target_channel = found
+
+    em = dark_red_embed(
+        f"📅 EVENT: {name}",
+        f"{desc}\n\n⏰ **Jam Mulai:** {start_time_str}\n\n📢 Jangan sampe ketinggalan ya! Gas ikutan! 🔥"
+    )
+    em.set_footer(text=f"Event dibuat oleh {ctx.author.display_name}")
+    em.timestamp = datetime.datetime.now()
+
+    # Kirim dengan @everyone ke channel target
+    event_msg = await target_channel.send(content="@everyone", embed=em)
+
+    if target_channel != ctx.channel:
+        await ctx.reply(f"✅ Event **{name}** berhasil dikirim ke {target_channel.mention}!")
+
+    # Cek apakah jam mulai valid dan jadwalkan reminder
+    try:
+        now = datetime.datetime.now()
+        event_time = datetime.datetime.strptime(start_time_str, "%H:%M").replace(
+            year=now.year, month=now.month, day=now.day
+        )
+        # Kalau jam sudah lewat, coba besok
+        if event_time <= now:
+            event_time += datetime.timedelta(days=1)
+        delay = (event_time - now).total_seconds()
+
+        async def send_event_start():
+            await asyncio.sleep(delay)
+            start_em = dark_red_embed(
+                f"🚨 EVENT MULAI SEKARANG: {name}!",
+                f"**{desc}**\n\n🔥 EVENT UDAH DIMULAI GAES! BURUAN GABUNG!\n⏰ Jam: **{start_time_str}**"
+            )
+            start_em.set_footer(text="Jangan sampai ketinggalan!")
+            start_em.timestamp = datetime.datetime.now()
+            try:
+                await event_msg.edit(embed=start_em)
+                await target_channel.send(content="@everyone 🚨 **EVENT DIMULAI SEKARANG!** 🚨")
+            except Exception:
+                pass
+
+        asyncio.create_task(send_event_start())
+        await ctx.reply(
+            f"✅ Event **{name}** dikirim ke {target_channel.mention}!\n"
+            f"⏰ Bot akan auto-announce saat jam **{start_time_str}** tiba!"
+        ) if target_channel == ctx.channel else None
+
+    except ValueError:
+        # Jam tidak valid, tetap kirim tanpa reminder
+        if target_channel == ctx.channel:
+            await ctx.reply(f"✅ Event **{name}** berhasil dikirim! (Format jam tidak dikenali, reminder otomatis dinonaktifkan)")
 
 @bot.command(name="addemoji", aliases=["emoji"])
 @commands.has_permissions(manage_emojis=True)
@@ -1008,12 +1157,24 @@ async def help_cmd(ctx):
     )
     em.add_field(name="🤖 AI", value="`ai [pertanyaan]`", inline=False)
     em.add_field(name="🎣 Fishing", value="`fish` `coins`", inline=True)
-    em.add_field(name="🧠 Game", value="`tebak`", inline=True)
+    em.add_field(
+        name="🧠 Tebak-Tebakan",
+        value="`tebak` `addtebak [soal|jawaban|reward]` `listtebak` `removetebak [no]`",
+        inline=False
+    )
     em.add_field(name="⚠️ Mod", value="`warn` `warns` `kick` `ban` `timeout` `move` `clear`", inline=False)
     em.add_field(name="👤 Info", value="`avatar` `userinfo`", inline=True)
     em.add_field(name="🎭 Role", value="`addrole` `removerole`", inline=True)
-    em.add_field(name="📢 Utility", value="`embed` `sticky` `autoresponse` `giveaway` `event` `addemoji`", inline=False)
-    em.add_field(name="🎰 Slash Commands", value="`/ticket` `/leveling` `/reactionrole` dan banyak lagi!", inline=False)
+    em.add_field(
+        name="📢 Utility",
+        value="`embed` `sticky` `autoresponse` `giveaway` `event [nama|desc|HH:MM|#channel]` `addemoji`",
+        inline=False
+    )
+    em.add_field(
+        name="🎰 Slash Commands",
+        value="`/ticket` `/leveling` `/reactionrole` `/setfishingreward` `/listfishingreward` `/addtebak` dan banyak lagi!",
+        inline=False
+    )
     em.set_footer(text="Prefix: !Doom | Semua command bisa pake slash juga!")
     await ctx.reply(embed=em)
 
@@ -1149,7 +1310,20 @@ async def slash_warn(interaction: discord.Interaction, member: discord.Member, a
     warns[gid][uid].append({"reason": alasan, "by": str(interaction.user.id), "time": time.time()})
     save_warns(warns)
     count = len(warns[gid][uid])
-    em = dark_red_embed("⚠️ Member Di-Warn!", f"**{member.display_name}** dapet warn!\n**Alasan:** {alasan}\n**Total:** {count}")
+    dm_status = ""
+    try:
+        dm_em = dark_red_embed(
+            "⚠️ Lo Kena Warn!",
+            f"Lo di-warn di server **{interaction.guild.name}**\n**Alasan:** {alasan}\n**Total Warn lo:** {count}\n\n⚠️ Hati-hati ya, jangan sampe nambah lagi!"
+        )
+        dm_em.set_footer(text=f"Warn oleh: {interaction.user.display_name}")
+        await member.send(embed=dm_em)
+        dm_status = "\n✅ Notifikasi DM terkirim."
+    except discord.Forbidden:
+        dm_status = "\n⚠️ Gagal kirim DM (member nonaktifkan DM)."
+    except discord.HTTPException as e:
+        dm_status = f"\n⚠️ Gagal kirim DM: {str(e)[:60]}"
+    em = dark_red_embed("⚠️ Member Di-Warn!", f"**{member.display_name}** dapet warn!\n**Alasan:** {alasan}\n**Total:** {count}{dm_status}")
     await interaction.response.send_message(embed=em)
 
 @tree.command(name="kick", description="Kick member dari server")
@@ -1258,12 +1432,54 @@ async def slash_autoresponse(interaction: discord.Interaction, aksi: str, trigge
     else:
         await interaction.response.send_message("❓ Aksi: `add`, `remove`, atau `list`", ephemeral=True)
 
-@tree.command(name="event", description="Kirim pesan event")
-@app_commands.describe(nama="Nama event", deskripsi="Deskripsi event", jam_mulai="Jam mulai event (contoh: 19:00)")
+@tree.command(name="event", description="Kirim pesan event ke channel")
+@app_commands.describe(
+    nama="Nama event",
+    deskripsi="Deskripsi event",
+    jam_mulai="Jam mulai event (contoh: 19:00)",
+    channel="Channel tujuan announce (opsional)"
+)
 @app_commands.default_permissions(administrator=True)
-async def slash_event(interaction: discord.Interaction, nama: str, deskripsi: str, jam_mulai: str):
-    em = dark_red_embed(f"📅 EVENT: {nama}", f"{deskripsi}\n\n⏰ **Jam Mulai:** {jam_mulai}\n\n📢 Jangan sampe ketinggalan!")
-    await interaction.response.send_message(embed=em)
+async def slash_event(interaction: discord.Interaction, nama: str, deskripsi: str, jam_mulai: str, channel: discord.TextChannel = None):
+    target_channel = channel or interaction.channel
+    em = dark_red_embed(
+        f"📅 EVENT: {nama}",
+        f"{deskripsi}\n\n⏰ **Jam Mulai:** {jam_mulai}\n\n📢 Jangan sampe ketinggalan! Gas ikutan! 🔥"
+    )
+    em.set_footer(text=f"Event dibuat oleh {interaction.user.display_name}")
+    em.timestamp = datetime.datetime.now()
+
+    event_msg = await target_channel.send(content="@everyone", embed=em)
+    reply_text = f"✅ Event **{nama}** berhasil dikirim ke {target_channel.mention}!"
+
+    try:
+        now = datetime.datetime.now()
+        event_time = datetime.datetime.strptime(jam_mulai, "%H:%M").replace(
+            year=now.year, month=now.month, day=now.day
+        )
+        if event_time <= now:
+            event_time += datetime.timedelta(days=1)
+        delay = (event_time - now).total_seconds()
+
+        async def send_event_start():
+            await asyncio.sleep(delay)
+            start_em = dark_red_embed(
+                f"🚨 EVENT MULAI SEKARANG: {nama}!",
+                f"**{deskripsi}**\n\n🔥 EVENT UDAH DIMULAI GAES! BURUAN GABUNG!\n⏰ Jam: **{jam_mulai}**"
+            )
+            start_em.timestamp = datetime.datetime.now()
+            try:
+                await event_msg.edit(embed=start_em)
+                await target_channel.send(content="@everyone 🚨 **EVENT DIMULAI SEKARANG!** 🚨")
+            except Exception:
+                pass
+
+        asyncio.create_task(send_event_start())
+        reply_text += f"\n⏰ Auto-announce aktif saat jam **{jam_mulai}** tiba!"
+    except ValueError:
+        reply_text += "\n⚠️ Format jam tidak dikenali, reminder otomatis dinonaktifkan."
+
+    await interaction.response.send_message(reply_text, ephemeral=True)
 
 @tree.command(name="tebak", description="Main tebak-tebakan!")
 async def slash_tebak(interaction: discord.Interaction):
@@ -1271,10 +1487,24 @@ async def slash_tebak(interaction: discord.Interaction):
     if gid in active_tebakan:
         await interaction.response.send_message("⚠️ Masih ada tebakan yang belum kejawab bro!", ephemeral=True)
         return
-    soal = random.choice(TEBAKAN_LIST)
-    active_tebakan[gid] = {"jawaban": soal["jawaban"], "reward": soal["reward"], "asker": interaction.user.id}
+    semua_soal = TEBAKAN_LIST + get_custom_tebakan()
+    soal = random.choice(semua_soal)
+    active_tebakan[gid] = {"jawaban": soal["jawaban"].lower(), "reward": soal["reward"], "asker": interaction.user.id}
     em = dark_red_embed("🧠 TEBAK-TEBAKAN!", f"**Soal:**\n{soal['soal']}\n\n💡 Reward: **{soal['reward']} koin**")
     await interaction.response.send_message(embed=em)
+
+@tree.command(name="addtebak", description="Tambah soal tebakan custom (Admin)")
+@app_commands.describe(soal="Pertanyaan tebakan", jawaban="Jawaban benar", reward="Reward koin (default: 25)")
+@app_commands.default_permissions(administrator=True)
+async def slash_addtebak(interaction: discord.Interaction, soal: str, jawaban: str, reward: int = 25):
+    custom = get_custom_tebakan()
+    custom.append({"soal": soal, "jawaban": jawaban.lower(), "reward": reward})
+    save_custom_tebakan(custom)
+    em = dark_red_embed(
+        "✅ Soal Tebakan Ditambah!",
+        f"**Soal:** {soal}\n**Jawaban:** {jawaban}\n**Reward:** {reward} koin\n\nTotal soal custom: **{len(custom)}**"
+    )
+    await interaction.response.send_message(embed=em, ephemeral=True)
 
 @tree.command(name="coins", description="Cek koin lo")
 async def slash_coins(interaction: discord.Interaction):
@@ -1300,6 +1530,50 @@ async def slash_leaderboard(interaction: discord.Interaction):
         medal = ["🥇", "🥈", "🥉"][i] if i < 3 else f"{i+1}."
         text += f"{medal} **{name}** - Level {data['level']} ({data['xp']} XP)\n"
     await interaction.response.send_message(embed=dark_red_embed("🏆 Leaderboard Level", text))
+
+@tree.command(name="setfishingreward", description="Edit nilai/harga reward ikan di fishing (Admin)")
+@app_commands.describe(
+    nama_ikan="Nama ikan yang mau diedit (contoh: Ikan Lele)",
+    nilai_baru="Nilai koin baru untuk ikan tersebut"
+)
+@app_commands.default_permissions(administrator=True)
+async def slash_setfishingreward(interaction: discord.Interaction, nama_ikan: str, nilai_baru: int):
+    matched = None
+    for f in FISHES:
+        if f["name"].lower() == nama_ikan.lower():
+            matched = f
+            break
+    if not matched:
+        daftar = ", ".join([f["name"] for f in FISHES])
+        await interaction.response.send_message(
+            f"❌ Ikan **{nama_ikan}** gak ketemu!\nDaftar ikan: {daftar}",
+            ephemeral=True
+        )
+        return
+    old_val = matched["value"]
+    matched["value"] = nilai_baru
+    em = dark_red_embed(
+        "✅ Reward Ikan Diupdate!",
+        f"{matched['emoji']} **{matched['name']}**\n"
+        f"Nilai lama: **{old_val} koin**\n"
+        f"Nilai baru: **{nilai_baru} koin**\n"
+        f"Rarity: **{matched['rarity']}**"
+    )
+    await interaction.response.send_message(embed=em)
+
+@tree.command(name="listfishingreward", description="Lihat semua reward ikan fishing saat ini")
+async def slash_listfishingreward(interaction: discord.Interaction):
+    rarity_order = ["legendary", "rare", "uncommon", "common", "trash"]
+    rarity_label = {"legendary": "⭐ Legendary", "rare": "💎 Rare", "uncommon": "🔵 Uncommon", "common": "⚪ Common", "trash": "💩 Trash"}
+    lines = []
+    for r in rarity_order:
+        group = [f for f in FISHES if f["rarity"] == r]
+        if group:
+            lines.append(f"**{rarity_label[r]}**")
+            for f in group:
+                lines.append(f"  {f['emoji']} {f['name']} → **{f['value']} koin**")
+    em = dark_red_embed("🐟 Daftar Reward Fishing", "\n".join(lines))
+    await interaction.response.send_message(embed=em, ephemeral=True)
 
 # ===================== ERROR HANDLERS =====================
 @bot.event
