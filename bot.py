@@ -36,7 +36,12 @@ def save_json(filename, data):
 
 # ===================== INTENTS =====================
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix=PREFIX + " ", intents=intents, help_command=None, case_insensitive=True)
+
+def get_prefix(bot, message):
+    """Support multiple prefix: '!Doom ' dan '!Kingdoom '"""
+    return ["!Doom ", "!Kingdoom ", "!doom ", "!kingdoom "]
+
+bot = commands.Bot(command_prefix=get_prefix, intents=intents, help_command=None, case_insensitive=True)
 tree = bot.tree
 
 # ===================== FISHING DATA =====================
@@ -254,6 +259,18 @@ async def on_ready():
 async def on_message(message):
     if message.author.bot:
         return
+
+    # ===== HANDLER MANUAL: !Kingdoom premium =====
+    content_stripped = message.content.strip()
+    if content_stripped.lower() == "!kingdoom premium":
+        if message.guild:
+            is_owner = message.author.id == OWNER_ID
+            is_admin = message.author.guild_permissions.administrator
+            if is_owner or is_admin:
+                ctx = await bot.get_context(message)
+                await premium_setup_panel(ctx)
+        return  # stop processing, jangan lanjut ke bot.process_commands
+    # ==============================================
 
     guild_id = str(message.guild.id) if message.guild else None
     content_lower = message.content.lower()
@@ -1557,7 +1574,7 @@ async def addemoji_cmd(ctx):
 # ===================== PREMIUM COMMAND (User) =====================
 
 @bot.command(name="premium")
-async def premium_cmd(ctx):
+async def premium_user_cmd(ctx):
     """Command untuk user order premium."""
     pdata = get_premium_data()
     settings = pdata.get("settings", {})
@@ -1696,51 +1713,33 @@ async def premium_cmd(ctx):
     await ctx.reply(embed=em, view=OrderPremiumView())
 
 # ===================== OWNER-ONLY PREMIUM SETUP (!Kingdoom premium) =====================
+# Cara akses: ketik "!Kingdoom premium" di Discord
+# Dengan prefix "!Kingdoom ", maka command name yang dibaca bot adalah "premium"
+# Command ini OVERRIDE command premium user saat dipanggil via prefix !Kingdoom
 
-@bot.command(name="Kingdoom")
-async def kingdoom_cmd(ctx, subcommand: str = None, *args):
-    """Hidden owner command untuk setup berbagai sistem bot."""
-    # Cek apakah owner
-    if ctx.author.id != OWNER_ID and not ctx.author.guild_permissions.administrator:
-        # Silent ignore agar tidak terdeteksi
-        return
+async def premium_setup_panel(ctx):
+    """Tampilkan panel setup premium untuk owner/admin."""
+    pdata = get_premium_data()
+    settings = pdata.get("settings", {})
+    webhook_url = settings.get("webhook_url", "")
+    webhook_display = "✅ Sudah diset" if webhook_url else "❌ Belum diset"
+    features = settings.get("features", [])
 
-    if subcommand and subcommand.lower() == "premium":
-        pdata = get_premium_data()
-        settings = pdata.get("settings", {})
-        webhook_url = settings.get("webhook_url", "")
-        webhook_display = f"✅ Sudah diset" if webhook_url else "❌ Belum diset"
-        features = settings.get("features", [])
-
-        em = dark_red_embed(
-            "⚙️ Setup Premium System",
-            f"**Panel kontrol premium system bot.**\n\n"
-            f"**🔗 Webhook Notifikasi:** {webhook_display}\n"
-            f"**💰 Harga:** {settings.get('price', 'Belum diset')}\n"
-            f"**⏳ Durasi Default:** {settings.get('duration_days', 30)} hari\n"
-            f"**⚙️ Total Fitur:** {len(features)} fitur aktif\n\n"
-            f"Gunakan tombol di bawah untuk mengatur sistem premium."
-        )
-        em.set_footer(text="⚠️ Panel ini hanya untuk Owner/Admin")
-        await ctx.send(embed=em, view=PremiumSetupView())
-        # Hapus pesan command untuk keamanan
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-    else:
-        await ctx.reply(
-            embed=dark_red_embed(
-                "⚙️ Kingdoom Control Panel",
-                "**Subcommand yang tersedia:**\n"
-                "• `!Kingdoom premium` — Setup sistem premium\n\n"
-                "*Panel ini hanya bisa diakses owner/admin.*"
-            )
-        )
-        try:
-            await ctx.message.delete()
-        except:
-            pass
+    em = dark_red_embed(
+        "⚙️ Setup Premium System",
+        f"**Panel kontrol premium system bot.**\n\n"
+        f"**🔗 Webhook Notifikasi:** {webhook_display}\n"
+        f"**💰 Harga:** {settings.get('price', 'Belum diset')}\n"
+        f"**⏳ Durasi Default:** {settings.get('duration_days', 30)} hari\n"
+        f"**⚙️ Total Fitur:** {len(features)} fitur aktif\n\n"
+        f"Gunakan tombol di bawah untuk mengatur sistem premium."
+    )
+    em.set_footer(text="⚠️ Panel ini hanya untuk Owner/Admin")
+    await ctx.send(embed=em, view=PremiumSetupView())
+    try:
+        await ctx.message.delete()
+    except:
+        pass
 
 @bot.command(name="help", aliases=["h"])
 async def help_cmd(ctx):
