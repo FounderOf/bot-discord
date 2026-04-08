@@ -7,7 +7,11 @@ import os
 import random
 import time
 import datetime
+import zoneinfo
 from pathlib import Path
+
+# Timezone WIB (UTC+7)
+WIB = zoneinfo.ZoneInfo("Asia/Jakarta")
 
 # ===================== CONFIG =====================
 PREFIX = "!Doom"
@@ -106,39 +110,47 @@ def save_custom_tebakan(data):
     save_json("custom_tebakan.json", data)
 
 # ===================== AI CHAT =====================
-import urllib.request
-import urllib.parse
+import aiohttp
 
 async def get_ai_response(question: str) -> str:
-    """Get AI response using Anthropic API"""
+    """Get AI response using Anthropic API via aiohttp (async)"""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return "❌ API key belum diset bro! Minta admin set `ANTHROPIC_API_KEY` dulu."
+
+    headers = {
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01",
+        "x-api-key": api_key,
+    }
+    payload = {
+        "model": "claude-haiku-4-5",
+        "max_tokens": 500,
+        "system": (
+            "Lo adalah RepublikDooms AI, bot Discord gaul dan nyantai. "
+            "Jawab pake bahasa Indonesia gaul, singkat, informatif, dan asik. "
+            "Pake singkatan gaul kayak 'btw', 'gw', 'lo', 'bro', 'sis', 'wkwk', dll. "
+            "Jangan formal banget, tapi tetep bermanfaat. Max 3 paragraf."
+        ),
+        "messages": [{"role": "user", "content": question}]
+    }
     try:
-        import urllib.request, json as _json
-        payload = _json.dumps({
-            "model": "claude-sonnet-4-5",
-            "max_tokens": 500,
-            "system": (
-                "Lo adalah RepublikDooms AI, bot Discord gaul dan nyantai. "
-                "Jawab pake bahasa Indonesia gaul, singkat, informatif, dan asik. "
-                "Pake singkatan gaul kayak 'btw', 'gw', 'lo', 'bro', 'sis', 'wkwk', dll. "
-                "Jangan formal banget, tapi tetep bermanfaat. Max 3 paragraf."
-            ),
-            "messages": [{"role": "user", "content": question}]
-        }).encode()
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "anthropic-version": "2023-06-01",
-                "x-api-key": os.getenv("ANTHROPIC_API_KEY", "")
-            },
-            method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = _json.loads(resp.read())
-            return data["content"][0]["text"]
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.anthropic.com/v1/messages",
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=20)
+            ) as resp:
+                if resp.status != 200:
+                    err_text = await resp.text()
+                    return f"❌ API error {resp.status} bro 😅 — {err_text[:80]}"
+                data = await resp.json()
+                return data["content"][0]["text"]
+    except asyncio.TimeoutError:
+        return "⏰ Timeout bro, API-nya lagi lambat. Coba lagi ya!"
     except Exception as e:
-        return f"Waduh gw lagi error nih bro 😅 ({str(e)[:50]}). Coba tanya lagi ya!"
+        return f"❌ Error gak terduga: {str(e)[:80]}"
 
 # ===================== HELPER FUNCTIONS =====================
 def get_fishing_data():
@@ -1057,7 +1069,7 @@ async def event_cmd(ctx, *, content: str = None):
         await ctx.reply(
             "❓ Format: `!Doom event Nama Event|Deskripsi|HH:MM|#channel`\n"
             "Contoh: `!Doom event Turnamen ML|Siap-siap gaskeun!|20:00|#announcement`\n"
-            "Channel opsional (default: channel saat ini)."
+            "Channel opsional (default: channel saat ini). Jam pakai WIB (UTC+7)."
         )
         return
     parts = content.split("|")
@@ -1077,52 +1089,57 @@ async def event_cmd(ctx, *, content: str = None):
 
     em = dark_red_embed(
         f"📅 EVENT: {name}",
-        f"{desc}\n\n⏰ **Jam Mulai:** {start_time_str}\n\n📢 Jangan sampe ketinggalan ya! Gas ikutan! 🔥"
+        f"{desc}\n\n⏰ **Jam Mulai:** {start_time_str} WIB\n\n📢 Jangan sampe ketinggalan ya! Gas ikutan! 🔥"
     )
     em.set_footer(text=f"Event dibuat oleh {ctx.author.display_name}")
-    em.timestamp = datetime.datetime.now()
+    em.timestamp = datetime.datetime.now(tz=WIB)
 
-    # Kirim dengan @everyone ke channel target
     event_msg = await target_channel.send(content="@everyone", embed=em)
 
     if target_channel != ctx.channel:
         await ctx.reply(f"✅ Event **{name}** berhasil dikirim ke {target_channel.mention}!")
 
-    # Cek apakah jam mulai valid dan jadwalkan reminder
+    # Cek apakah jam mulai valid dan jadwalkan reminder (WIB)
     try:
-        now = datetime.datetime.now()
-        event_time = datetime.datetime.strptime(start_time_str, "%H:%M").replace(
-            year=now.year, month=now.month, day=now.day
-        )
-        # Kalau jam sudah lewat, coba besok
-        if event_time <= now:
+        now_wib = datetime.datetime.now(tz=WIB)
+        naive = datetime.datetime.strptime(start_time_str, "%H:%M")
+        event_time = now_wib.replace(hour=naive.hour, minute=naive.minute, second=0, microsecond=0)
+        # Kalau jam sudah lewat hari ini, jadwal besok
+        if event_time <= now_wib:
             event_time += datetime.timedelta(days=1)
-        delay = (event_time - now).total_seconds()
+        delay = (event_time - now_wib).total_seconds()
 
-        async def send_event_start():
-            await asyncio.sleep(delay)
+        async def send_event_start(target_ch, ev_msg, ev_name, ev_desc, ev_time_str, scheduled_ts):
+            # Tidur sampai tepat waktu yang dijadwalkan (cek ulang saat bangun)
+            await asyncio.sleep(max(0, (scheduled_ts - datetime.datetime.now(tz=WIB)).total_seconds()))
             start_em = dark_red_embed(
-                f"🚨 EVENT MULAI SEKARANG: {name}!",
-                f"**{desc}**\n\n🔥 EVENT UDAH DIMULAI GAES! BURUAN GABUNG!\n⏰ Jam: **{start_time_str}**"
+                f"🚨 EVENT MULAI SEKARANG: {ev_name}!",
+                f"**{ev_desc}**\n\n🔥 EVENT UDAH DIMULAI GAES! BURUAN GABUNG!\n⏰ Jam: **{ev_time_str} WIB**"
             )
-            start_em.set_footer(text="Jangan sampai ketinggalan!")
-            start_em.timestamp = datetime.datetime.now()
+            start_em.set_footer(text="Jangan sampai ketinggalan! 🔥")
+            start_em.timestamp = datetime.datetime.now(tz=WIB)
             try:
-                await event_msg.edit(embed=start_em)
-                await target_channel.send(content="@everyone 🚨 **EVENT DIMULAI SEKARANG!** 🚨")
+                await ev_msg.edit(embed=start_em)
+            except Exception:
+                pass
+            try:
+                await target_ch.send(content="@everyone 🚨 **EVENT DIMULAI SEKARANG!** 🚨")
             except Exception:
                 pass
 
-        asyncio.create_task(send_event_start())
-        await ctx.reply(
-            f"✅ Event **{name}** dikirim ke {target_channel.mention}!\n"
-            f"⏰ Bot akan auto-announce saat jam **{start_time_str}** tiba!"
-        ) if target_channel == ctx.channel else None
+        asyncio.create_task(send_event_start(
+            target_channel, event_msg, name, desc, start_time_str, event_time
+        ))
+
+        if target_channel == ctx.channel:
+            await ctx.reply(
+                f"✅ Event **{name}** dikirim ke {target_channel.mention}!\n"
+                f"⏰ Auto-announce dijadwalkan jam **{start_time_str} WIB** (delay: {int(delay//60)} menit lagi)."
+            )
 
     except ValueError:
-        # Jam tidak valid, tetap kirim tanpa reminder
         if target_channel == ctx.channel:
-            await ctx.reply(f"✅ Event **{name}** berhasil dikirim! (Format jam tidak dikenali, reminder otomatis dinonaktifkan)")
+            await ctx.reply(f"✅ Event **{name}** berhasil dikirim! ⚠️ Format jam tidak dikenali (gunakan HH:MM), reminder otomatis dinonaktifkan.")
 
 @bot.command(name="addemoji", aliases=["emoji"])
 @commands.has_permissions(manage_emojis=True)
@@ -1436,7 +1453,7 @@ async def slash_autoresponse(interaction: discord.Interaction, aksi: str, trigge
 @app_commands.describe(
     nama="Nama event",
     deskripsi="Deskripsi event",
-    jam_mulai="Jam mulai event (contoh: 19:00)",
+    jam_mulai="Jam mulai event WIB (contoh: 19:00)",
     channel="Channel tujuan announce (opsional)"
 )
 @app_commands.default_permissions(administrator=True)
@@ -1444,40 +1461,45 @@ async def slash_event(interaction: discord.Interaction, nama: str, deskripsi: st
     target_channel = channel or interaction.channel
     em = dark_red_embed(
         f"📅 EVENT: {nama}",
-        f"{deskripsi}\n\n⏰ **Jam Mulai:** {jam_mulai}\n\n📢 Jangan sampe ketinggalan! Gas ikutan! 🔥"
+        f"{deskripsi}\n\n⏰ **Jam Mulai:** {jam_mulai} WIB\n\n📢 Jangan sampe ketinggalan! Gas ikutan! 🔥"
     )
     em.set_footer(text=f"Event dibuat oleh {interaction.user.display_name}")
-    em.timestamp = datetime.datetime.now()
+    em.timestamp = datetime.datetime.now(tz=WIB)
 
     event_msg = await target_channel.send(content="@everyone", embed=em)
     reply_text = f"✅ Event **{nama}** berhasil dikirim ke {target_channel.mention}!"
 
     try:
-        now = datetime.datetime.now()
-        event_time = datetime.datetime.strptime(jam_mulai, "%H:%M").replace(
-            year=now.year, month=now.month, day=now.day
-        )
-        if event_time <= now:
+        now_wib = datetime.datetime.now(tz=WIB)
+        naive = datetime.datetime.strptime(jam_mulai, "%H:%M")
+        event_time = now_wib.replace(hour=naive.hour, minute=naive.minute, second=0, microsecond=0)
+        if event_time <= now_wib:
             event_time += datetime.timedelta(days=1)
-        delay = (event_time - now).total_seconds()
+        delay = (event_time - now_wib).total_seconds()
 
-        async def send_event_start():
-            await asyncio.sleep(delay)
+        async def send_event_start(target_ch, ev_msg, ev_nama, ev_desc, ev_jam, scheduled_ts):
+            await asyncio.sleep(max(0, (scheduled_ts - datetime.datetime.now(tz=WIB)).total_seconds()))
             start_em = dark_red_embed(
-                f"🚨 EVENT MULAI SEKARANG: {nama}!",
-                f"**{deskripsi}**\n\n🔥 EVENT UDAH DIMULAI GAES! BURUAN GABUNG!\n⏰ Jam: **{jam_mulai}**"
+                f"🚨 EVENT MULAI SEKARANG: {ev_nama}!",
+                f"**{ev_desc}**\n\n🔥 EVENT UDAH DIMULAI GAES! BURUAN GABUNG!\n⏰ Jam: **{ev_jam} WIB**"
             )
-            start_em.timestamp = datetime.datetime.now()
+            start_em.set_footer(text="Jangan sampai ketinggalan! 🔥")
+            start_em.timestamp = datetime.datetime.now(tz=WIB)
             try:
-                await event_msg.edit(embed=start_em)
-                await target_channel.send(content="@everyone 🚨 **EVENT DIMULAI SEKARANG!** 🚨")
+                await ev_msg.edit(embed=start_em)
+            except Exception:
+                pass
+            try:
+                await target_ch.send(content="@everyone 🚨 **EVENT DIMULAI SEKARANG!** 🚨")
             except Exception:
                 pass
 
-        asyncio.create_task(send_event_start())
-        reply_text += f"\n⏰ Auto-announce aktif saat jam **{jam_mulai}** tiba!"
+        asyncio.create_task(send_event_start(
+            target_channel, event_msg, nama, deskripsi, jam_mulai, event_time
+        ))
+        reply_text += f"\n⏰ Auto-announce dijadwalkan jam **{jam_mulai} WIB** ({int(delay//60)} menit lagi)."
     except ValueError:
-        reply_text += "\n⚠️ Format jam tidak dikenali, reminder otomatis dinonaktifkan."
+        reply_text += "\n⚠️ Format jam tidak dikenali (gunakan HH:MM), reminder otomatis dinonaktifkan."
 
     await interaction.response.send_message(reply_text, ephemeral=True)
 
