@@ -8,7 +8,6 @@ import random
 import time
 import datetime
 import zoneinfo
-import sqlite3
 from pathlib import Path
 
 # Timezone WIB (UTC+7)
@@ -17,118 +16,12 @@ WIB = zoneinfo.ZoneInfo("Asia/Jakarta")
 # ===================== CONFIG =====================
 PREFIX = "!Doom"
 BOT_TOKEN = os.getenv("DISCORD_TOKEN", "YOUR_BOT_TOKEN_HERE")
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
+OWNER_ID = int(os.getenv("OWNER_ID", "0"))  # Set OWNER_ID di environment variable
 DARK_RED = 0x8B0000
 
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 
-# ===================== PREMIUM PACKAGES =====================
-premium_packages = {
-    "basic": {
-        "name": "Basic",
-        "price": "Rp10.000",
-        "days": 7,
-        "emoji": "⭐"
-    },
-    "pro": {
-        "name": "Pro",
-        "price": "Rp25.000",
-        "days": 15,
-        "emoji": "💎"
-    },
-    "ultimate": {
-        "name": "Ultimate",
-        "price": "Rp50.000",
-        "days": 30,
-        "emoji": "👑"
-    }
-}
-
-# Command yang butuh premium (guild-based)
-premium_commands = ["ticket", "leveling", "ai"]
-
-# ===================== DATABASE (SQLite) =====================
-DB_PATH = DATA_DIR / "premium.db"
-
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS premium_guilds (
-            guild_id TEXT PRIMARY KEY,
-            expired_at INTEGER NOT NULL,
-            package_key TEXT NOT NULL,
-            activated_at INTEGER NOT NULL
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS premium_roles (
-            guild_id TEXT PRIMARY KEY,
-            role_id TEXT NOT NULL
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-def is_guild_premium(guild_id: str) -> bool:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT expired_at FROM premium_guilds WHERE guild_id = ?", (guild_id,))
-    row = c.fetchone()
-    conn.close()
-    if row is None:
-        return False
-    return int(time.time()) < row[0]
-
-def get_guild_premium_info(guild_id: str):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT expired_at, package_key, activated_at FROM premium_guilds WHERE guild_id = ?", (guild_id,))
-    row = c.fetchone()
-    conn.close()
-    if row is None:
-        return None
-    if int(time.time()) >= row[0]:
-        return None
-    return {"expired_at": row[0], "package_key": row[1], "activated_at": row[2]}
-
-def set_guild_premium(guild_id: str, package_key: str):
-    days = premium_packages[package_key]["days"]
-    expired_at = int(time.time()) + days * 86400
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO premium_guilds (guild_id, expired_at, package_key, activated_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(guild_id) DO UPDATE SET
-            expired_at=excluded.expired_at,
-            package_key=excluded.package_key,
-            activated_at=excluded.activated_at
-    """, (guild_id, expired_at, package_key, int(time.time())))
-    conn.commit()
-    conn.close()
-    return expired_at
-
-def get_premium_role(guild_id: str):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT role_id FROM premium_roles WHERE guild_id = ?", (guild_id,))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else None
-
-def set_premium_role(guild_id: str, role_id: str):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO premium_roles (guild_id, role_id) VALUES (?, ?)
-        ON CONFLICT(guild_id) DO UPDATE SET role_id=excluded.role_id
-    """, (guild_id, role_id))
-    conn.commit()
-    conn.close()
-
-# ===================== JSON HELPERS =====================
 def load_json(filename, default=None):
     path = DATA_DIR / filename
     if path.exists():
@@ -217,48 +110,6 @@ def get_custom_tebakan():
 def save_custom_tebakan(data):
     save_json("custom_tebakan.json", data)
 
-# ===================== AI CHAT =====================
-import aiohttp
-
-async def get_ai_response(question: str) -> str:
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return "❌ API key belum diset bro! Minta admin set `ANTHROPIC_API_KEY` dulu."
-
-    headers = {
-        "Content-Type": "application/json",
-        "anthropic-version": "2023-06-01",
-        "x-api-key": api_key,
-    }
-    payload = {
-        "model": "claude-haiku-4-5",
-        "max_tokens": 500,
-        "system": (
-            "Lo adalah RepublikDooms AI, bot Discord gaul dan nyantai. "
-            "Jawab pake bahasa Indonesia gaul, singkat, informatif, dan asik. "
-            "Pake singkatan gaul kayak 'btw', 'gw', 'lo', 'bro', 'sis', 'wkwk', dll. "
-            "Jangan formal banget, tapi tetep bermanfaat. Max 3 paragraf."
-        ),
-        "messages": [{"role": "user", "content": question}]
-    }
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.anthropic.com/v1/messages",
-                headers=headers,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=20)
-            ) as resp:
-                if resp.status != 200:
-                    err_text = await resp.text()
-                    return f"❌ API error {resp.status} bro 😅 — {err_text[:80]}"
-                data = await resp.json()
-                return data["content"][0]["text"]
-    except asyncio.TimeoutError:
-        return "⏰ Timeout bro, API-nya lagi lambat. Coba lagi ya!"
-    except Exception as e:
-        return f"❌ Error gak terduga: {str(e)[:80]}"
-
 # ===================== HELPER FUNCTIONS =====================
 def get_fishing_data():
     return load_json("fishing.json", {})
@@ -322,6 +173,24 @@ def get_giveaways():
 def save_giveaways(data):
     save_json("giveaways.json", data)
 
+def get_tickets():
+    return load_json("tickets.json", {"panels": {}, "tickets": {}})
+
+def save_tickets(data):
+    save_json("tickets.json", data)
+
+def get_premium_data():
+    return load_json("premium.json", {"users": {}, "settings": {}})
+
+def save_premium_data(data):
+    save_json("premium.json", data)
+
+def get_premium_orders():
+    return load_json("premium_orders.json", {})
+
+def save_premium_orders(data):
+    save_json("premium_orders.json", data)
+
 def dark_red_embed(title="", description="", **kwargs):
     em = discord.Embed(title=title, description=description, color=DARK_RED, **kwargs)
     return em
@@ -329,14 +198,46 @@ def dark_red_embed(title="", description="", **kwargs):
 fishing_cooldowns = {}
 active_tebakan = {}
 
-# ===================== PREMIUM CHECK HELPER =====================
-def check_premium(guild_id: str) -> bool:
-    return is_guild_premium(guild_id)
+# ===================== PREMIUM HELPERS =====================
+def is_premium(user_id: str, feature: str = None) -> bool:
+    """Cek apakah user punya premium. Jika feature diisi, cek feature spesifik."""
+    pdata = get_premium_data()
+    uid = str(user_id)
+    users = pdata.get("users", {})
+    if uid not in users:
+        return False
+    user_premium = users[uid]
+    # Cek expiry
+    if user_premium.get("expires_at"):
+        if time.time() > user_premium["expires_at"]:
+            return False
+    if not user_premium.get("active", False):
+        return False
+    if feature:
+        settings = pdata.get("settings", {})
+        premium_features = settings.get("features", [])
+        return feature in premium_features
+    return True
+
+def get_premium_settings():
+    pdata = get_premium_data()
+    return pdata.get("settings", {})
+
+async def send_to_webhook(webhook_url: str, embed: discord.Embed, view=None):
+    """Kirim embed ke webhook URL."""
+    import aiohttp
+    try:
+        async with aiohttp.ClientSession() as session:
+            webhook = discord.Webhook.from_url(webhook_url, session=session)
+            await webhook.send(embed=embed, view=view)
+            return True
+    except Exception as e:
+        print(f"Webhook error: {e}")
+        return False
 
 # ===================== EVENTS =====================
 @bot.event
 async def on_ready():
-    init_db()
     print(f"✅ {bot.user} udah nyala bro!")
     await bot.change_presence(
         activity=discord.Activity(type=discord.ActivityType.watching, name="RepublikDooms | !Doom help")
@@ -348,7 +249,6 @@ async def on_ready():
         print(f"❌ Sync error: {e}")
     check_giveaways.start()
     check_sticky.start()
-    check_expired_premium.start()
 
 @bot.event
 async def on_message(message):
@@ -430,6 +330,7 @@ async def handle_leveling(message):
         levels[gid] = {}
     if uid not in levels[gid]:
         levels[gid][uid] = {"xp": 0, "level": 0}
+    old_level = levels[gid][uid]["level"]
     xp_gain = random.randint(10, 25)
     levels[gid][uid]["xp"] += xp_gain
     needed = (levels[gid][uid]["level"] + 1) * 100
@@ -470,62 +371,154 @@ async def check_giveaways():
                 guild = bot.get_guild(int(gid))
                 if not guild:
                     continue
-                channel = guild.get_channel(int(gw["channel_id"]))
-                if not channel:
+                ch = guild.get_channel(int(gw["channel_id"]))
+                if not ch:
                     continue
                 try:
-                    msg = await channel.fetch_message(int(msg_id))
+                    msg = await ch.fetch_message(int(msg_id))
                     reaction = discord.utils.get(msg.reactions, emoji="🎉")
                     users = []
                     if reaction:
-                        async for user in reaction.users():
-                            if not user.bot:
-                                users.append(user)
+                        async for u in reaction.users():
+                            if not u.bot:
+                                users.append(u)
                     if users:
                         winner = random.choice(users)
-                        win_em = dark_red_embed(
+                        em = dark_red_embed(
                             "🎉 GIVEAWAY SELESAI!",
-                            f"**Hadiah:** {gw['prize']}\n🏆 **Pemenang:** {winner.mention}\nSelamat ya bro!"
+                            f"**Hadiah:** {gw['prize']}\n**Pemenang:** {winner.mention}\nSelamat ya bestie! 🥳"
                         )
-                        await channel.send(embed=win_em)
-                        await msg.edit(embed=dark_red_embed("🎉 GIVEAWAY ENDED", f"**Hadiah:** {gw['prize']}\n🏆 Pemenang: {winner.mention}"))
+                        await ch.send(embed=em)
                     else:
-                        await channel.send(embed=dark_red_embed("😢 Giveaway Berakhir", f"**{gw['prize']}** — Gak ada yang ikutan bro!"))
-                except Exception as e:
-                    print(f"Giveaway error: {e}")
-                gw_data[gid][msg_id]["ended"] = True
+                        await ch.send("😢 Gak ada yang ikut giveaway, hadiahnya disimpen aja deh...")
+                    gw_data[gid][msg_id]["ended"] = True
+                except:
+                    pass
     save_giveaways(gw_data)
 
-@tasks.loop(seconds=15)
+@tasks.loop(seconds=60)
 async def check_sticky():
-    pass
+    pass  # handled in on_message
 
-@tasks.loop(minutes=10)
-async def check_expired_premium():
-    """Auto-clean expired premium dari DB"""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM premium_guilds WHERE expired_at < ?", (int(time.time()),))
-    conn.commit()
-    conn.close()
+# ===================== VIEWS =====================
 
-# ===================== FISHING VIEW =====================
+class TicketView(discord.ui.View):
+    def __init__(self, panel_config):
+        super().__init__(timeout=None)
+        self.panel_config = panel_config
+        btn = discord.ui.Button(
+            label=panel_config.get("button_label", "Buka Ticket"),
+            emoji=panel_config.get("button_emoji", "🎫"),
+            style=discord.ButtonStyle.danger,
+            custom_id=f"ticket_open_{panel_config['panel_id']}"
+        )
+        btn.callback = self.open_ticket
+        self.add_item(btn)
+
+    async def open_ticket(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        config = self.panel_config
+        existing = discord.utils.get(guild.channels, name=f"ticket-{interaction.user.name.lower()}")
+        if existing:
+            await interaction.response.send_message(f"Lo udah punya ticket aktif: {existing.mention} bro!", ephemeral=True)
+            return
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
+        }
+        cat = guild.get_channel(int(config["category_id"])) if config.get("category_id") else None
+        ch = await guild.create_text_channel(
+            f"ticket-{interaction.user.name}",
+            overwrites=overwrites,
+            category=cat,
+            topic=f"Ticket milik {interaction.user}"
+        )
+        em = dark_red_embed(
+            f"🎫 Ticket - {interaction.user.display_name}",
+            config.get("description", "Hai! Cerita masalah lo di sini, tim kami bakal bantu ASAP!")
+        )
+        close_view = TicketCloseView()
+        await ch.send(content=interaction.user.mention, embed=em, view=close_view)
+        await interaction.response.send_message(f"Ticket lo udah kebuka bro! {ch.mention}", ephemeral=True)
+
+class TicketCloseView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Tutup Ticket", emoji="🔒", style=discord.ButtonStyle.danger, custom_id="ticket_close")
+    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        em = dark_red_embed("🔒 Ticket Ditutup", f"Ticket ditutup oleh {interaction.user.mention}.\nChannel akan dihapus dalam 5 detik.")
+        await interaction.response.send_message(embed=em)
+        await asyncio.sleep(5)
+        await interaction.channel.delete()
+
+class FishingView(discord.ui.View):
+    def __init__(self, user_id):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+
+    @discord.ui.button(label="🎣 Mancing", style=discord.ButtonStyle.danger)
+    async def fish(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Ini bukan mancing lo bro, jangan gangguin!", ephemeral=True)
+            return
+        now = time.time()
+        uid = str(interaction.user.id)
+        if uid in fishing_cooldowns and now - fishing_cooldowns[uid] < 10:
+            sisa = round(10 - (now - fishing_cooldowns[uid]))
+            await interaction.response.send_message(f"⏳ Santai bro! Tungguin dulu **{sisa} detik** lagi. Pancingnya capek juga wkwk", ephemeral=True)
+            return
+        fishing_cooldowns[uid] = now
+        udata = get_user_fishing(uid)
+        rod = RODS.get(udata["rod"], RODS["Pancing Bambu"])
+        bait_list = udata.get("bait", {})
+        bait_bonus = 1.0
+        used_bait = None
+        for bname, qty in list(bait_list.items()):
+            if qty > 0 and bname in BAITS:
+                bait_bonus = BAITS[bname]["bonus"]
+                bait_list[bname] -= 1
+                if bait_list[bname] <= 0:
+                    del bait_list[bname]
+                used_bait = bname
+                break
+        udata["bait"] = bait_list
+        weights = []
+        fish_pool = FISHES.copy()
+        for f in fish_pool:
+            w = {"legendary": 2, "rare": 10, "uncommon": 25, "common": 50, "trash": 13}[f["rarity"]]
+            weights.append(w * rod["catch_bonus"] * bait_bonus if f["rarity"] != "trash" else w)
+        caught = random.choices(fish_pool, weights=weights, k=1)[0]
+        coins_earned = int(caught["value"] * rod["catch_bonus"] * bait_bonus)
+        udata["coins"] += coins_earned
+        udata["total_catch"] += 1
+        udata["inventory"].append(caught["name"])
+        save_user_fishing(uid, udata)
+        rarity_colors = {"legendary": "⭐⭐⭐", "rare": "⭐⭐", "uncommon": "⭐", "common": "", "trash": "💩"}
+        em = dark_red_embed(
+            f"{caught['emoji']} Hasil Mancing!",
+            f"**{interaction.user.display_name}** dapet **{caught['name']}** {rarity_colors[caught['rarity']]}\n"
+            f"🪙 +{coins_earned} koin (Total: {udata['coins']})\n"
+            f"🎣 Rod: {rod['emoji']} {udata['rod']}\n"
+            + (f"🪱 Umpan: {used_bait}" if used_bait else "⚠️ Gak pake umpan, hasilnya bisa lebih jelek!")
+        )
+        await interaction.response.edit_message(embed=em, view=FishingMainView(interaction.user.id))
+
 class FishingMainView(discord.ui.View):
     def __init__(self, user_id):
         super().__init__(timeout=120)
         self.user_id = user_id
 
-    @discord.ui.button(label="🎣 Mancing!", style=discord.ButtonStyle.danger, row=0)
-    async def mancing(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="🎣 Mancing", style=discord.ButtonStyle.danger, row=0)
+    async def fish(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message("❌ Ini bukan sesi mancing lo bro!", ephemeral=True)
+            await interaction.response.send_message("❌ Ini bukan mancing lo bro!", ephemeral=True)
             return
-        uid = str(interaction.user.id)
         now = time.time()
-        cooldown = 30
-        last = fishing_cooldowns.get(uid, 0)
-        sisa = int(cooldown - (now - last))
-        if sisa > 0:
+        uid = str(interaction.user.id)
+        if uid in fishing_cooldowns and now - fishing_cooldowns[uid] < 10:
+            sisa = round(10 - (now - fishing_cooldowns[uid]))
             await interaction.response.send_message(f"⏳ Sabar bro! **{sisa} detik** lagi. Emang mancing bisa buru-buru? wkwk", ephemeral=True)
             return
         fishing_cooldowns[uid] = now
@@ -567,7 +560,7 @@ class FishingMainView(discord.ui.View):
     @discord.ui.button(label="🎒 Inventori", style=discord.ButtonStyle.secondary, row=0)
     async def inventory(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message("❌ Lo gak bisa liat inventori orang lain bro!", ephemeral=True)
+            await interaction.response.send_message("❌ Lo gak bisa liat inventori orang lain bro! Privasi dong 😤", ephemeral=True)
             return
         udata = get_user_fishing(str(interaction.user.id))
         inv = udata.get("inventory", [])
@@ -629,7 +622,7 @@ class ShopBuyView(discord.ui.View):
         udata["coins"] -= price
         udata["rod"] = item
         save_user_fishing(str(interaction.user.id), udata)
-        await interaction.response.send_message(f"✅ Berhasil beli **{item}**! Sisa koin: {udata['coins']} 🪙", ephemeral=True)
+        await interaction.response.send_message(f"✅ Berhasil beli **{item}**! Sekarang lo pake rod baru. Sisa koin: {udata['coins']} 🪙", ephemeral=True)
 
     async def buy_bait(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
@@ -648,7 +641,6 @@ class ShopBuyView(discord.ui.View):
         save_user_fishing(str(interaction.user.id), udata)
         await interaction.response.send_message(f"✅ Beli **{item}** x5! Sisa koin: {udata['coins']} 🪙", ephemeral=True)
 
-# ===================== REACTION ROLE VIEW =====================
 class ReactionRoleView(discord.ui.View):
     def __init__(self, roles_config):
         super().__init__(timeout=None)
@@ -675,7 +667,6 @@ class ReactionRoleView(discord.ui.View):
             await interaction.user.add_roles(role)
             await interaction.response.send_message(f"✅ Role **{role.name}** berhasil dapet!", ephemeral=True)
 
-# ===================== LEVELING SETUP VIEW =====================
 class LevelingSetupView(discord.ui.View):
     def __init__(self, guild_id):
         super().__init__(timeout=300)
@@ -737,342 +728,363 @@ class LevelingSetupView(discord.ui.View):
         except asyncio.TimeoutError:
             await interaction.followup.send("⏰ Timeout!", ephemeral=True)
 
-# ===================== TICKET SYSTEM (FIXED) =====================
-class TicketView(discord.ui.View):
-    def __init__(self, panel_config: dict):
+# ===================== PREMIUM ORDER VIEWS =====================
+
+class PremiumOrderView(discord.ui.View):
+    """View untuk order premium - dikirim ke webhook owner untuk approval."""
+    def __init__(self, order_id: str, user_id: int, guild_id: str):
         super().__init__(timeout=None)
-        self.panel_config = panel_config
-        btn = discord.ui.Button(
-            label=panel_config.get("button_label", "Buka Ticket"),
-            emoji=panel_config.get("button_emoji", "🎫"),
-            style=discord.ButtonStyle.danger,
-            custom_id=f"ticket_open_{panel_config['panel_id']}"
-        )
-        btn.callback = self.open_ticket
-        self.add_item(btn)
+        self.order_id = order_id
+        self.user_id = user_id
+        self.guild_id = guild_id
 
-    async def open_ticket(self, interaction: discord.Interaction):
-        guild = interaction.guild
-        user = interaction.user
-        category_id = self.panel_config.get("category_id")
-        category = None
-        if category_id:
-            category = guild.get_channel(int(category_id))
-
-        # Cek apakah sudah punya ticket terbuka
-        existing = discord.utils.get(
-            guild.text_channels,
-            name=f"ticket-{user.name.lower().replace(' ', '-')}"
-        )
-        if existing:
-            await interaction.response.send_message(
-                f"❌ Lo udah punya ticket terbuka bro: {existing.mention}",
-                ephemeral=True
-            )
+    @discord.ui.button(label="✅ Approve", style=discord.ButtonStyle.success, custom_id="premium_approve")
+    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Hanya owner yang bisa approve
+        if interaction.user.id != OWNER_ID and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Lo gak punya akses buat ini!", ephemeral=True)
             return
 
-        # Buat channel ticket
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
+        orders = get_premium_orders()
+        if self.order_id not in orders:
+            await interaction.response.send_message("❌ Order tidak ditemukan!", ephemeral=True)
+            return
+
+        order = orders[self.order_id]
+        if order.get("status") != "pending":
+            await interaction.response.send_message(f"⚠️ Order ini sudah **{order['status']}**!", ephemeral=True)
+            return
+
+        # Aktifkan premium
+        pdata = get_premium_data()
+        if "users" not in pdata:
+            pdata["users"] = {}
+        
+        duration_days = order.get("duration_days", 30)
+        pdata["users"][str(self.user_id)] = {
+            "active": True,
+            "activated_at": time.time(),
+            "expires_at": time.time() + (duration_days * 86400),
+            "approved_by": str(interaction.user.id),
+            "package": order.get("package", "Premium")
         }
-        # Tambah akses untuk admin
-        for role in guild.roles:
-            if role.permissions.administrator:
-                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        save_premium_data(pdata)
 
+        # Update status order
+        orders[self.order_id]["status"] = "approved"
+        orders[self.order_id]["approved_by"] = str(interaction.user.id)
+        orders[self.order_id]["approved_at"] = time.time()
+        save_premium_orders(orders)
+
+        # DM user yang order
         try:
-            ticket_ch = await guild.create_text_channel(
-                name=f"ticket-{user.name.lower().replace(' ', '-')}",
-                overwrites=overwrites,
-                category=category,
-                topic=f"Ticket milik {user} | ID: {user.id}"
+            user = await bot.fetch_user(self.user_id)
+            pdata_settings = get_premium_settings()
+            features = pdata_settings.get("features", [])
+            features_text = "\n".join([f"• {f}" for f in features]) if features else "• Semua fitur premium"
+            expires_dt = datetime.datetime.fromtimestamp(pdata["users"][str(self.user_id)]["expires_at"], tz=WIB)
+            dm_em = dark_red_embed(
+                "👑 Premium Akses Disetujui!",
+                f"Halo **{user.display_name}**! 🎉\n\n"
+                f"Order premium lo udah **DIAPPROVE** oleh admin!\n\n"
+                f"**📦 Paket:** {order.get('package', 'Premium')}\n"
+                f"**⏳ Durasi:** {duration_days} hari\n"
+                f"**📅 Berakhir:** {expires_dt.strftime('%d/%m/%Y %H:%M')} WIB\n\n"
+                f"**🔑 Fitur yang Bisa Lo Akses:**\n{features_text}\n\n"
+                f"Makasih udah order premium! Enjoy! 🚀"
             )
-        except discord.Forbidden:
-            await interaction.response.send_message("❌ Bot gak punya izin buat bikin channel bro!", ephemeral=True)
-            return
+            dm_em.set_footer(text="RepublikDooms Premium System")
+            await user.send(embed=dm_em)
         except Exception as e:
-            await interaction.response.send_message(f"❌ Error bikin ticket: {str(e)[:100]}", ephemeral=True)
+            print(f"Gagal DM user premium: {e}")
+
+        # Update embed di webhook/channel
+        em = interaction.message.embeds[0] if interaction.message.embeds else dark_red_embed("Order")
+        em.color = 0x00FF00
+        em.set_footer(text=f"✅ APPROVED oleh {interaction.user.display_name} | {datetime.datetime.now(tz=WIB).strftime('%d/%m/%Y %H:%M')}")
+        
+        # Disable semua button
+        for child in self.children:
+            child.disabled = True
+        
+        await interaction.response.edit_message(embed=em, view=self)
+        await interaction.followup.send(f"✅ Order **{self.order_id}** berhasil di-approve! User sudah di-DM.", ephemeral=True)
+
+    @discord.ui.button(label="❌ Reject", style=discord.ButtonStyle.danger, custom_id="premium_reject")
+    async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != OWNER_ID and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Lo gak punya akses buat ini!", ephemeral=True)
             return
 
-        em = dark_red_embed(
-            "🎫 Ticket Dibuka!",
-            f"Halo {user.mention}! 👋\n\nTiket lo udah dibuat. Ceritain masalah lo di sini ya!\nAdmin akan segera merespons.\n\n**Klik tombol di bawah untuk menutup ticket.**"
-        )
-        em.set_footer(text=f"Ticket ID: {ticket_ch.id}")
-        close_view = TicketCloseView(user.id)
-        await ticket_ch.send(content=user.mention, embed=em, view=close_view)
-        await interaction.response.send_message(
-            f"✅ Ticket lo berhasil dibuat: {ticket_ch.mention}",
-            ephemeral=True
-        )
-
-class TicketCloseView(discord.ui.View):
-    def __init__(self, owner_id: int):
-        super().__init__(timeout=None)
-        self.owner_id = owner_id
-
-    @discord.ui.button(label="🔒 Tutup Ticket", style=discord.ButtonStyle.danger, custom_id="ticket_close")
-    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Owner ticket atau admin bisa close
-        is_admin = interaction.user.guild_permissions.administrator
-        is_owner = interaction.user.id == self.owner_id
-        if not is_admin and not is_owner:
-            await interaction.response.send_message("❌ Hanya owner ticket atau admin yang bisa nutup ini bro!", ephemeral=True)
+        orders = get_premium_orders()
+        if self.order_id not in orders:
+            await interaction.response.send_message("❌ Order tidak ditemukan!", ephemeral=True)
             return
 
-        em = dark_red_embed("🔒 Ticket Ditutup", f"Ticket ditutup oleh **{interaction.user.display_name}**.\nChannel akan dihapus dalam 5 detik...")
-        await interaction.response.send_message(embed=em)
-        await asyncio.sleep(5)
+        order = orders[self.order_id]
+        if order.get("status") != "pending":
+            await interaction.response.send_message(f"⚠️ Order ini sudah **{order['status']}**!", ephemeral=True)
+            return
+
+        orders[self.order_id]["status"] = "rejected"
+        orders[self.order_id]["rejected_by"] = str(interaction.user.id)
+        orders[self.order_id]["rejected_at"] = time.time()
+        save_premium_orders(orders)
+
+        # DM user
         try:
-            await interaction.channel.delete(reason=f"Ticket ditutup oleh {interaction.user}")
-        except Exception:
-            pass
-
-# ===================== PREMIUM VIEWS =====================
-class PremiumPackageSelect(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=120)
-        options = [
-            discord.SelectOption(
-                label=f"{pkg['emoji']} {pkg['name']}",
-                value=key,
-                description=f"{pkg['price']} - {pkg['days']} hari"
+            user = await bot.fetch_user(self.user_id)
+            dm_em = dark_red_embed(
+                "❌ Order Premium Ditolak",
+                f"Maaf **{user.display_name}**, order premium lo **DITOLAK** oleh admin.\n\n"
+                f"Kemungkinan alasan:\n• Pembayaran tidak terverifikasi\n• Data order tidak valid\n\n"
+                f"Kalau ada pertanyaan, silakan hubungi admin server langsung."
             )
-            for key, pkg in premium_packages.items()
-        ]
-        select = discord.ui.Select(
-            placeholder="Pilih paket premium...",
-            options=options,
-            custom_id="premium_select"
-        )
-        select.callback = self.on_select
-        self.add_item(select)
+            await user.send(embed=dm_em)
+        except Exception as e:
+            print(f"Gagal DM user reject: {e}")
 
-    async def on_select(self, interaction: discord.Interaction):
-        selected_key = interaction.data["values"][0]
-        pkg = premium_packages[selected_key]
+        em = interaction.message.embeds[0] if interaction.message.embeds else dark_red_embed("Order")
+        em.color = 0xFF0000
+        em.set_footer(text=f"❌ REJECTED oleh {interaction.user.display_name} | {datetime.datetime.now(tz=WIB).strftime('%d/%m/%Y %H:%M')}")
+        
+        for child in self.children:
+            child.disabled = True
+        
+        await interaction.response.edit_message(embed=em, view=self)
+        await interaction.followup.send(f"✅ Order **{self.order_id}** berhasil di-reject. User sudah di-DM.", ephemeral=True)
 
-        em = dark_red_embed(
-            f"{pkg['emoji']} Paket {pkg['name']} Dipilih!",
-            f"**Harga:** {pkg['price']}\n**Durasi:** {pkg['days']} hari\n\n"
-            f"Silakan transfer ke QRIS di bawah, lalu klik **Kirim Bukti** setelah bayar ya bro! 💸"
-        )
-        em.set_image(url="attachment://qris.png")
-        em.set_footer(text="Pembayaran akan diverifikasi oleh admin")
-
-        qris_file = discord.File("qris.png", filename="qris.png")
-        proof_view = SendProofView(selected_key, interaction.user, interaction.guild)
-
-        await interaction.response.edit_message(
-            embed=em,
-            attachments=[qris_file],
-            view=proof_view
-        )
-
-class SendProofView(discord.ui.View):
-    def __init__(self, package_key: str, user: discord.User, guild: discord.Guild):
-        super().__init__(timeout=300)
-        self.package_key = package_key
-        self.user = user
-        self.guild = guild
-
-    @discord.ui.button(label="📸 Kirim Bukti Bayar", style=discord.ButtonStyle.success, custom_id="send_proof")
-    async def send_proof(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message("❌ Ini bukan sesi lo bro!", ephemeral=True)
+    @discord.ui.button(label="💬 Pesan Singkat", style=discord.ButtonStyle.secondary, custom_id="premium_message")
+    async def send_message(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != OWNER_ID and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Lo gak punya akses buat ini!", ephemeral=True)
             return
 
         await interaction.response.send_message(
-            "📸 Kirim screenshot bukti pembayaran lo di sini (timeout: 3 menit):",
+            "📝 Ketik pesan yang mau dikirim ke user (timeout 60 detik):\n"
+            "*(Pesan akan dikirim via DM bot ke user yang order)*",
             ephemeral=True
         )
 
         def check(m):
-            return m.author.id == interaction.user.id and m.channel.id == interaction.channel.id and m.attachments
+            return m.author.id == interaction.user.id and isinstance(m.channel, discord.DMChannel) or \
+                   (m.author.id == interaction.user.id and m.channel == interaction.channel)
 
         try:
-            proof_msg = await bot.wait_for("message", check=check, timeout=180)
+            msg = await bot.wait_for(
+                "message",
+                check=lambda m: m.author.id == interaction.user.id,
+                timeout=60
+            )
+            custom_text = msg.content
+
+            user = await bot.fetch_user(self.user_id)
+            orders = get_premium_orders()
+            order = orders.get(self.order_id, {})
+            
+            dm_em = dark_red_embed(
+                "📩 Pesan dari Admin RepublikDooms",
+                f"**Halo {user.display_name}!**\n\n"
+                f"Admin mengirim pesan terkait order premium lo:\n\n"
+                f"```{custom_text}```\n\n"
+                f"*Ref Order: `{self.order_id}`*"
+            )
+            dm_em.set_footer(text=f"Dikirim oleh {interaction.user.display_name}")
+            await user.send(embed=dm_em)
+            await interaction.followup.send(f"✅ Pesan berhasil dikirim ke **{user.display_name}**!", ephemeral=True)
         except asyncio.TimeoutError:
-            await interaction.followup.send("⏰ Timeout! Coba kirim bukti lagi.", ephemeral=True)
-            return
+            await interaction.followup.send("⏰ Timeout! Pesan tidak dikirim.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Gagal kirim pesan: {str(e)[:100]}", ephemeral=True)
 
-        pkg = premium_packages[self.package_key]
+# ===================== PREMIUM SETUP VIEW (Owner Only) =====================
 
-        # Kirim ke log channel
-        log_channel = bot.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            now_wib = datetime.datetime.now(tz=WIB)
-            log_em = dark_red_embed(
-                "📥 Permintaan Premium Baru!",
-                f"**👤 User:** {self.user} (`{self.user.id}`)\n"
-                f"**🏠 Server:** {self.guild.name} (`{self.guild.id}`)\n"
-                f"**📦 Paket:** {pkg['emoji']} {pkg['name']}\n"
-                f"**💰 Harga:** {pkg['price']}\n"
-                f"**⏳ Durasi:** {pkg['days']} hari\n"
-                f"**🕐 Waktu:** {now_wib.strftime('%d/%m/%Y %H:%M')} WIB"
-            )
-            log_em.set_footer(text=f"Guild ID: {self.guild.id} | Package: {self.package_key}")
+class PremiumSetupView(discord.ui.View):
+    """View untuk setup premium - hanya bisa diakses owner via !Kingdoom premium"""
+    def __init__(self):
+        super().__init__(timeout=300)
 
-            # Kirim bukti pembayaran
-            proof_attachment = proof_msg.attachments[0]
-            log_em.set_image(url=proof_attachment.url)
-
-            approve_reject_view = ApproveRejectView(
-                guild_id=str(self.guild.id),
-                user_id=str(self.user.id),
-                package_key=self.package_key,
-                requester_channel_id=str(interaction.channel.id)
-            )
-            await log_channel.send(embed=log_em, view=approve_reject_view)
-
-        await interaction.followup.send(
-            embed=dark_red_embed(
-                "✅ Bukti Terkirim!",
-                f"Bukti pembayaran lo udah dikirim ke admin bro!\n"
-                f"Tunggu konfirmasi ya, biasanya gak lama kok 🙏\n\n"
-                f"**Paket:** {pkg['emoji']} {pkg['name']}\n"
-                f"**Harga:** {pkg['price']}\n"
-                f"**Durasi:** {pkg['days']} hari"
-            ),
+    @discord.ui.button(label="🔗 Set Webhook URL", style=discord.ButtonStyle.primary, row=0)
+    async def set_webhook(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "🔗 Ketik **Webhook URL** channel tujuan notifikasi order premium:\n"
+            "*(Paste webhook URL-nya di sini)*",
             ephemeral=True
         )
-
-        # Hapus pesan bukti dari channel umum
         try:
-            await proof_msg.delete()
-        except:
-            pass
+            msg = await bot.wait_for(
+                "message",
+                check=lambda m: m.author.id == interaction.user.id,
+                timeout=60
+            )
+            webhook_url = msg.content.strip()
+            if not webhook_url.startswith("https://discord.com/api/webhooks/"):
+                await interaction.followup.send("❌ URL tidak valid! Harus berupa Discord Webhook URL.", ephemeral=True)
+                return
+            pdata = get_premium_data()
+            if "settings" not in pdata:
+                pdata["settings"] = {}
+            pdata["settings"]["webhook_url"] = webhook_url
+            save_premium_data(pdata)
+            try:
+                await msg.delete()
+            except:
+                pass
+            await interaction.followup.send("✅ Webhook URL berhasil disimpan! (Pesan webhook dihapus demi keamanan)", ephemeral=True)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
 
-class ApproveRejectView(discord.ui.View):
-    def __init__(self, guild_id: str, user_id: str, package_key: str, requester_channel_id: str):
-        super().__init__(timeout=None)
-        self.guild_id = guild_id
-        self.user_id = user_id
-        self.package_key = package_key
-        self.requester_channel_id = requester_channel_id
+    @discord.ui.button(label="⚙️ Set Fitur Premium", style=discord.ButtonStyle.secondary, row=0)
+    async def set_features(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pdata = get_premium_data()
+        current_features = pdata.get("settings", {}).get("features", [])
+        current_text = ", ".join(current_features) if current_features else "Belum ada"
+        
+        await interaction.response.send_message(
+            f"⚙️ **Fitur Premium Saat Ini:** `{current_text}`\n\n"
+            "Ketik daftar fitur yang bisa diakses user premium (pisah dengan koma):\n"
+            "Contoh: `fishing_bonus, tebak_bonus, vip_channel, custom_role`\n\n"
+            "*(Fitur ini yang akan dicek saat user pake command premium)*",
+            ephemeral=True
+        )
+        try:
+            msg = await bot.wait_for(
+                "message",
+                check=lambda m: m.author.id == interaction.user.id,
+                timeout=60
+            )
+            features = [f.strip() for f in msg.content.split(",") if f.strip()]
+            pdata = get_premium_data()
+            if "settings" not in pdata:
+                pdata["settings"] = {}
+            pdata["settings"]["features"] = features
+            save_premium_data(pdata)
+            await interaction.followup.send(
+                f"✅ Fitur premium diupdate!\n**Fitur aktif:** {', '.join(features)}",
+                ephemeral=True
+            )
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
 
-    @discord.ui.button(label="✅ Approve", style=discord.ButtonStyle.success, custom_id="premium_approve")
-    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Hanya admin yang bisa approve bro!", ephemeral=True)
+    @discord.ui.button(label="💰 Set Harga & Durasi", style=discord.ButtonStyle.secondary, row=0)
+    async def set_price(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pdata = get_premium_data()
+        settings = pdata.get("settings", {})
+        current_price = settings.get("price", "Belum diset")
+        current_duration = settings.get("duration_days", 30)
+
+        await interaction.response.send_message(
+            f"💰 **Harga saat ini:** `{current_price}`\n"
+            f"⏳ **Durasi saat ini:** `{current_duration} hari`\n\n"
+            "Ketik format: `harga|durasi_hari`\n"
+            "Contoh: `50000|30` artinya harga Rp50.000 untuk 30 hari",
+            ephemeral=True
+        )
+        try:
+            msg = await bot.wait_for(
+                "message",
+                check=lambda m: m.author.id == interaction.user.id,
+                timeout=60
+            )
+            parts = msg.content.strip().split("|")
+            price = parts[0].strip()
+            duration = int(parts[1].strip()) if len(parts) > 1 else 30
+            pdata = get_premium_data()
+            if "settings" not in pdata:
+                pdata["settings"] = {}
+            pdata["settings"]["price"] = price
+            pdata["settings"]["duration_days"] = duration
+            save_premium_data(pdata)
+            await interaction.followup.send(
+                f"✅ Harga premium diupdate!\n**Harga:** {price}\n**Durasi:** {duration} hari",
+                ephemeral=True
+            )
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
+
+    @discord.ui.button(label="📋 Lihat Pengaturan", style=discord.ButtonStyle.success, row=1)
+    async def view_settings(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pdata = get_premium_data()
+        settings = pdata.get("settings", {})
+        features = settings.get("features", [])
+        webhook_url = settings.get("webhook_url", "Belum diset")
+        webhook_display = f"✅ Sudah diset (`...{webhook_url[-20:]}`)" if webhook_url != "Belum diset" else "❌ Belum diset"
+        
+        em = dark_red_embed(
+            "👑 Pengaturan Premium System",
+            f"**🔗 Webhook:** {webhook_display}\n"
+            f"**💰 Harga:** {settings.get('price', 'Belum diset')}\n"
+            f"**⏳ Durasi Default:** {settings.get('duration_days', 30)} hari\n\n"
+            f"**⚙️ Fitur Premium ({len(features)} fitur):**\n"
+            + ("\n".join([f"• `{f}`" for f in features]) if features else "*(Belum ada fitur diset)*")
+        )
+        await interaction.response.send_message(embed=em, ephemeral=True)
+
+    @discord.ui.button(label="📊 Daftar User Premium", style=discord.ButtonStyle.success, row=1)
+    async def list_users(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pdata = get_premium_data()
+        users = pdata.get("users", {})
+        if not users:
+            await interaction.response.send_message("📊 Belum ada user premium.", ephemeral=True)
             return
-
-        pkg = premium_packages[self.package_key]
-        expired_at = set_guild_premium(self.guild_id, self.package_key)
-        expired_dt = datetime.datetime.fromtimestamp(expired_at, tz=WIB)
-
-        # Tambah role premium jika ada
-        guild = bot.get_guild(int(self.guild_id))
-        role_warning = ""
-        if guild:
-            role_id = get_premium_role(self.guild_id)
-            if role_id:
-                role = guild.get_role(int(role_id))
-                member = guild.get_member(int(self.user_id))
-                if role and member:
-                    try:
-                        await member.add_roles(role)
-                    except Exception as e:
-                        role_warning = f"\n⚠️ Gagal assign role: {str(e)[:50]}"
-                else:
-                    role_warning = "\n⚠️ Role atau member tidak ditemukan."
+        
+        lines = []
+        now = time.time()
+        for uid, udata in users.items():
+            try:
+                user = await bot.fetch_user(int(uid))
+                name = user.display_name
+            except:
+                name = f"User {uid}"
+            
+            active = udata.get("active", False)
+            expires = udata.get("expires_at", 0)
+            if expires and now > expires:
+                status = "⏰ Expired"
+            elif active:
+                exp_dt = datetime.datetime.fromtimestamp(expires, tz=WIB).strftime('%d/%m/%Y') if expires else "Permanen"
+                status = f"✅ Aktif (s.d. {exp_dt})"
             else:
-                role_warning = "\n⚠️ Premium role belum diset di server ini."
+                status = "❌ Nonaktif"
+            lines.append(f"**{name}** (`{uid}`) - {status}")
+        
+        em = dark_red_embed("📊 Daftar User Premium", "\n".join(lines[:20]))
+        em.set_footer(text=f"Total: {len(users)} user premium")
+        await interaction.response.send_message(embed=em, ephemeral=True)
 
-        # Update embed log
-        em = interaction.message.embeds[0]
-        em.color = 0x00FF00
-        em.title = "✅ APPROVED - " + (em.title or "Premium Request")
-        em.add_field(
-            name="✅ Diapprove oleh",
-            value=f"{interaction.user.mention} • {datetime.datetime.now(tz=WIB).strftime('%d/%m/%Y %H:%M')} WIB",
-            inline=False
-        )
-        em.add_field(
-            name="⏳ Expired",
-            value=expired_dt.strftime('%d/%m/%Y %H:%M') + " WIB",
-            inline=False
-        )
-
-        # Disable buttons
-        for item in self.children:
-            item.disabled = True
-
-        await interaction.response.edit_message(embed=em, view=self)
-
-        # Notif ke user
-        try:
-            user = await bot.fetch_user(int(self.user_id))
-            notif_em = dark_red_embed(
-                "🎉 Premium Diaktifkan!",
-                f"Selamat bro! Premium server **{guild.name if guild else self.guild_id}** lo udah aktif!\n\n"
-                f"**📦 Paket:** {pkg['emoji']} {pkg['name']}\n"
-                f"**⏳ Expired:** {expired_dt.strftime('%d/%m/%Y %H:%M')} WIB\n\n"
-                f"Enjoy fitur premium nya ya! 🔥{role_warning}"
-            )
-            await user.send(embed=notif_em)
-        except Exception:
-            pass
-
-        await interaction.followup.send(
-            f"✅ Premium **{pkg['name']}** berhasil diaktifkan untuk guild `{self.guild_id}`!{role_warning}",
+    @discord.ui.button(label="🗑️ Cabut Premium User", style=discord.ButtonStyle.danger, row=1)
+    async def revoke_premium(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "🗑️ Ketik **User ID** yang mau dicabut premium-nya:",
             ephemeral=True
         )
-
-    @discord.ui.button(label="❌ Reject", style=discord.ButtonStyle.danger, custom_id="premium_reject")
-    async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Hanya admin yang bisa reject bro!", ephemeral=True)
-            return
-
-        # Update embed log
-        em = interaction.message.embeds[0]
-        em.color = 0xFF0000
-        em.title = "❌ REJECTED - " + (em.title or "Premium Request")
-        em.add_field(
-            name="❌ Direject oleh",
-            value=f"{interaction.user.mention} • {datetime.datetime.now(tz=WIB).strftime('%d/%m/%Y %H:%M')} WIB",
-            inline=False
-        )
-
-        for item in self.children:
-            item.disabled = True
-
-        await interaction.response.edit_message(embed=em, view=self)
-
-        # Notif ke user
         try:
-            user = await bot.fetch_user(int(self.user_id))
-            guild = bot.get_guild(int(self.guild_id))
-            notif_em = dark_red_embed(
-                "❌ Pembayaran Ditolak",
-                f"Maaf bro, bukti pembayaran premium server **{guild.name if guild else self.guild_id}** lo ditolak.\n\n"
-                f"Kemungkinan alasan:\n"
-                f"• Bukti tidak jelas / blur\n"
-                f"• Jumlah transfer tidak sesuai\n"
-                f"• Bukti sudah kadaluarsa\n\n"
-                f"Coba lagi dengan bukti yang valid ya! Atau DM admin untuk info lebih lanjut."
+            msg = await bot.wait_for(
+                "message",
+                check=lambda m: m.author.id == interaction.user.id,
+                timeout=30
             )
-            await user.send(embed=notif_em)
-        except Exception:
-            pass
-
-        await interaction.followup.send("❌ Pembayaran berhasil direject.", ephemeral=True)
+            uid = msg.content.strip()
+            pdata = get_premium_data()
+            if uid in pdata.get("users", {}):
+                pdata["users"][uid]["active"] = False
+                save_premium_data(pdata)
+                await interaction.followup.send(f"✅ Premium user `{uid}` berhasil dicabut!", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ User ID `{uid}` tidak ditemukan di data premium.", ephemeral=True)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
 
 # ===================== PREFIX COMMANDS =====================
 
-# --- AI Chat ---
-@bot.command(name="ai")
-async def ai_chat(ctx, *, question: str = None):
-    if not question:
-        await ctx.reply("❓ Tanya apa dulu bro? Contoh: `!Doom ai siapa itu elon musk?`")
-        return
-    async with ctx.typing():
-        resp = await get_ai_response(question)
-    em = dark_red_embed(f"🤖 RepublikDooms AI", resp)
-    em.set_footer(text=f"Ditanya oleh {ctx.author.display_name}")
+# --- Ping (prefix + slash) ---
+@bot.command(name="ping")
+async def ping_cmd(ctx):
+    latency = round(bot.latency * 1000)
+    em = dark_red_embed(
+        "🏓 Pong!",
+        f"**Latency:** `{latency}ms`\n**Status:** {'🟢 Lancar' if latency < 100 else '🟡 Agak lambat' if latency < 200 else '🔴 Lambat'}"
+    )
     await ctx.reply(embed=em)
 
 # --- Fishing ---
@@ -1109,6 +1121,7 @@ async def tebak(ctx):
 @bot.command(name="addtebak")
 @commands.has_permissions(administrator=True)
 async def addtebak_cmd(ctx, *, content: str = None):
+    """Format: !Doom addtebak Soal pertanyaan|jawaban|reward"""
     if not content:
         await ctx.reply("❓ Format: `!Doom addtebak Pertanyaan lo|jawaban|reward_koin`\nContoh: `!Doom addtebak Ibu kota Indonesia?|jakarta|50`")
         return
@@ -1124,7 +1137,8 @@ async def addtebak_cmd(ctx, *, content: str = None):
     save_custom_tebakan(custom)
     em = dark_red_embed(
         "✅ Soal Tebakan Ditambah!",
-        f"**Soal:** {soal}\n**Jawaban:** {jawaban}\n**Reward:** {reward} koin\n\nTotal soal custom: **{len(custom)}**"
+        f"**Soal:** {soal}\n**Jawaban:** {jawaban}\n**Reward:** {reward} koin\n\n"
+        f"Total soal custom: **{len(custom)}**"
     )
     await ctx.reply(embed=em)
 
@@ -1230,15 +1244,15 @@ async def ban(ctx, member: discord.Member = None, *, reason="Gak ada alasan"):
     em = dark_red_embed("🔨 Member Di-Ban!", f"**{member.display_name}** di-ban!\n**Alasan:** {reason}")
     await ctx.send(embed=em)
 
-@bot.command(name="timeout")
+@bot.command(name="timeout", aliases=["mute"])
 @commands.has_permissions(moderate_members=True)
-async def timeout_cmd(ctx, member: discord.Member = None, menit: int = 10, *, reason="Gak ada alasan"):
+async def timeout_cmd(ctx, member: discord.Member = None, minutes: int = 10, *, reason="Gak ada alasan"):
     if not member:
-        await ctx.reply("❓ Mention member dulu bro!")
+        await ctx.reply("❓ Mention member dulu!")
         return
-    until = discord.utils.utcnow() + datetime.timedelta(minutes=menit)
+    until = discord.utils.utcnow() + datetime.timedelta(minutes=minutes)
     await member.timeout(until, reason=reason)
-    em = dark_red_embed("⏱️ Member Di-Timeout!", f"**{member.display_name}** di-timeout **{menit} menit**!\n**Alasan:** {reason}")
+    em = dark_red_embed("⏱️ Member Di-Timeout!", f"**{member.display_name}** di-timeout {minutes} menit!\n**Alasan:** {reason}")
     await ctx.send(embed=em)
 
 @bot.command(name="move")
@@ -1302,17 +1316,59 @@ async def clear(ctx, amount: int = 5):
 @commands.has_permissions(manage_messages=True)
 async def embed_cmd(ctx, *, content: str = None):
     if not content:
-        await ctx.reply("❓ Format: `!Doom embed Judul|Deskripsi`")
+        await ctx.reply(
+            "❓ Format: `!Doom embed Judul|Deskripsi`\n"
+            "Untuk kirim ke main channel: `!Doom embed Judul|Deskripsi|main`"
+        )
         return
-    parts = content.split("|", 1)
+    parts = content.split("|")
     title = parts[0].strip()
     desc = parts[1].strip() if len(parts) > 1 else ""
+    send_to_main = len(parts) > 2 and parts[2].strip().lower() == "main"
     em = dark_red_embed(title, desc)
-    await ctx.send(embed=em)
+
+    target_channel = ctx.channel
+    if send_to_main:
+        config = get_config()
+        gid = str(ctx.guild.id)
+        main_ch_id = config.get(gid, {}).get("embed_main_channel")
+        if main_ch_id:
+            ch = ctx.guild.get_channel(int(main_ch_id))
+            if ch:
+                target_channel = ch
+            else:
+                await ctx.reply("⚠️ Main channel tidak ditemukan! Kirim ke channel ini saja.")
+        else:
+            await ctx.reply("⚠️ Main channel belum diset! Gunakan `!Doom setmainchannel #channel` dulu.")
+            return
+
+    await target_channel.send(embed=em)
+    if target_channel != ctx.channel:
+        await ctx.reply(f"✅ Embed berhasil dikirim ke {target_channel.mention}!")
     try:
         await ctx.message.delete()
     except:
         pass
+
+@bot.command(name="setmainchannel")
+@commands.has_permissions(administrator=True)
+async def set_main_channel(ctx, channel: discord.TextChannel = None):
+    """Set main channel untuk embed notifikasi."""
+    if not channel:
+        await ctx.reply("❓ Format: `!Doom setmainchannel #channel`")
+        return
+    config = get_config()
+    gid = str(ctx.guild.id)
+    if gid not in config:
+        config[gid] = {}
+    config[gid]["embed_main_channel"] = str(channel.id)
+    save_config(config)
+    em = dark_red_embed(
+        "✅ Main Channel Diset!",
+        f"Notifikasi embed sekarang akan dikirim ke {channel.mention}.\n\n"
+        f"Gunakan `!Doom embed Judul|Deskripsi|main` untuk kirim embed ke main channel."
+    )
+    await ctx.reply(embed=em)
 
 @bot.command(name="autoresponse", aliases=["ar"])
 @commands.has_permissions(administrator=True)
@@ -1413,6 +1469,7 @@ async def event_cmd(ctx, *, content: str = None):
     name = parts[0].strip()
     desc = parts[1].strip() if len(parts) > 1 else "Event seru nih!"
     start_time_str = parts[2].strip() if len(parts) > 2 else "Belum ditentukan"
+
     target_channel = ctx.channel
     if len(parts) > 3 and ctx.message.channel_mentions:
         target_channel = ctx.message.channel_mentions[0]
@@ -1421,6 +1478,7 @@ async def event_cmd(ctx, *, content: str = None):
         found = discord.utils.get(ctx.guild.channels, name=ch_name)
         if found:
             target_channel = found
+
     em = dark_red_embed(
         f"📅 EVENT: {name}",
         f"{desc}\n\n⏰ **Jam Mulai:** {start_time_str} WIB\n\n📢 Jangan sampe ketinggalan ya! Gas ikutan! 🔥"
@@ -1428,8 +1486,10 @@ async def event_cmd(ctx, *, content: str = None):
     em.set_footer(text=f"Event dibuat oleh {ctx.author.display_name}")
     em.timestamp = datetime.datetime.now(tz=WIB)
     event_msg = await target_channel.send(content="@everyone", embed=em)
+
     if target_channel != ctx.channel:
         await ctx.reply(f"✅ Event **{name}** berhasil dikirim ke {target_channel.mention}!")
+
     try:
         now_wib = datetime.datetime.now(tz=WIB)
         naive = datetime.datetime.strptime(start_time_str, "%H:%M")
@@ -1458,11 +1518,13 @@ async def event_cmd(ctx, *, content: str = None):
         asyncio.create_task(send_event_start(
             target_channel, event_msg, name, desc, start_time_str, event_time
         ))
+
         if target_channel == ctx.channel:
             await ctx.reply(
                 f"✅ Event **{name}** dikirim ke {target_channel.mention}!\n"
                 f"⏰ Auto-announce dijadwalkan jam **{start_time_str} WIB** (delay: {int(delay//60)} menit lagi)."
             )
+
     except ValueError:
         if target_channel == ctx.channel:
             await ctx.reply(f"✅ Event **{name}** berhasil dikirim! ⚠️ Format jam tidak dikenali (gunakan HH:MM), reminder otomatis dinonaktifkan.")
@@ -1492,13 +1554,200 @@ async def addemoji_cmd(ctx):
     except Exception as e:
         await ctx.reply(f"❌ Error: {str(e)[:100]}")
 
+# ===================== PREMIUM COMMAND (User) =====================
+
+@bot.command(name="premium")
+async def premium_cmd(ctx):
+    """Command untuk user order premium."""
+    pdata = get_premium_data()
+    settings = pdata.get("settings", {})
+    price = settings.get("price", "Hubungi admin")
+    duration = settings.get("duration_days", 30)
+    features = settings.get("features", [])
+    webhook_url = settings.get("webhook_url", "")
+
+    # Cek status premium user
+    uid = str(ctx.author.id)
+    user_premium = pdata.get("users", {}).get(uid, {})
+    
+    if user_premium.get("active") and (not user_premium.get("expires_at") or time.time() < user_premium.get("expires_at", 0)):
+        expires_at = user_premium.get("expires_at")
+        exp_text = datetime.datetime.fromtimestamp(expires_at, tz=WIB).strftime('%d/%m/%Y %H:%M') if expires_at else "Permanen"
+        em = dark_red_embed(
+            "👑 Status Premium Lo",
+            f"✅ Lo udah punya **PREMIUM AKTIF** bro!\n\n"
+            f"**📦 Paket:** {user_premium.get('package', 'Premium')}\n"
+            f"**📅 Berakhir:** {exp_text} WIB\n\n"
+            f"**🔑 Fitur lo:**\n" +
+            ("\n".join([f"• `{f}`" for f in features]) if features else "• Semua fitur premium")
+        )
+        await ctx.reply(embed=em)
+        return
+
+    em = dark_red_embed(
+        "👑 RepublikDooms Premium",
+        f"Upgrade akses lo ke **PREMIUM** dan dapetin fitur eksklusif!\n\n"
+        f"**💰 Harga:** {price}\n"
+        f"**⏳ Durasi:** {duration} hari\n\n"
+        f"**🔑 Fitur Premium:**\n" +
+        ("\n".join([f"• `{f}`" for f in features]) if features else "• Berbagai fitur eksklusif") +
+        f"\n\n**📌 Cara Order:**\n"
+        f"Klik tombol **Order Premium** di bawah dan ikuti instruksi!\n"
+        f"Admin akan review dan approve order lo segera."
+    )
+
+    class OrderPremiumView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=60)
+
+        @discord.ui.button(label="👑 Order Premium", style=discord.ButtonStyle.success)
+        async def order(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.user.id != ctx.author.id:
+                await interaction.response.send_message("❌ Ini bukan order lo bro!", ephemeral=True)
+                return
+
+            await interaction.response.send_message(
+                "📝 Ketik bukti pembayaran / konfirmasi order lo (foto/teks, max 60 detik):\n"
+                "*(Ceritakan juga paket yang mau lo ambil)*",
+                ephemeral=True
+            )
+
+            try:
+                confirm_msg = await bot.wait_for(
+                    "message",
+                    check=lambda m: m.author.id == interaction.user.id,
+                    timeout=60
+                )
+                order_note = confirm_msg.content[:500]
+
+                # Buat order ID
+                import hashlib
+                order_id = hashlib.md5(f"{interaction.user.id}{time.time()}".encode()).hexdigest()[:8].upper()
+                
+                # Simpan order
+                orders = get_premium_orders()
+                orders[order_id] = {
+                    "user_id": str(interaction.user.id),
+                    "username": str(interaction.user),
+                    "guild_id": str(ctx.guild.id),
+                    "guild_name": ctx.guild.name,
+                    "note": order_note,
+                    "package": f"{duration} Hari",
+                    "duration_days": duration,
+                    "price": price,
+                    "status": "pending",
+                    "ordered_at": time.time()
+                }
+                save_premium_orders(orders)
+
+                # Buat embed notifikasi untuk owner
+                order_em = dark_red_embed(
+                    "🛒 ORDER PREMIUM BARU!",
+                    f"Ada order premium masuk! Segera review.\n\n"
+                    f"**👤 User:** {interaction.user.mention} (`{interaction.user}`)\n"
+                    f"**🆔 User ID:** `{interaction.user.id}`\n"
+                    f"**🏠 Server:** {ctx.guild.name} (`{ctx.guild.id}`)\n"
+                    f"**📦 Paket:** {duration} Hari\n"
+                    f"**💰 Harga:** {price}\n"
+                    f"**🕐 Waktu:** {datetime.datetime.now(tz=WIB).strftime('%d/%m/%Y %H:%M')} WIB\n\n"
+                    f"**📝 Catatan/Bukti:**\n```{order_note}```\n\n"
+                    f"**🔖 Order ID:** `{order_id}`"
+                )
+                order_em.set_thumbnail(url=interaction.user.display_avatar.url)
+                order_em.set_footer(text=f"Order ID: {order_id}")
+
+                # Kirim ke webhook
+                sent_to_webhook = False
+                if webhook_url:
+                    import aiohttp
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            webhook = discord.Webhook.from_url(webhook_url, session=session)
+                            view_for_webhook = PremiumOrderView(order_id, interaction.user.id, str(ctx.guild.id))
+                            await webhook.send(embed=order_em, view=view_for_webhook)
+                            sent_to_webhook = True
+                    except Exception as e:
+                        print(f"Webhook premium error: {e}")
+
+                if not sent_to_webhook:
+                    # Fallback: DM owner jika webhook gagal
+                    if OWNER_ID:
+                        try:
+                            owner = await bot.fetch_user(OWNER_ID)
+                            view_for_dm = PremiumOrderView(order_id, interaction.user.id, str(ctx.guild.id))
+                            await owner.send(embed=order_em, view=view_for_dm)
+                        except Exception as e:
+                            print(f"DM owner fallback error: {e}")
+
+                # Konfirmasi ke user
+                confirm_em = dark_red_embed(
+                    "✅ Order Premium Terkirim!",
+                    f"Order lo udah diterima dan lagi **menunggu review** admin!\n\n"
+                    f"**🔖 Order ID:** `{order_id}`\n"
+                    f"**📦 Paket:** {duration} Hari\n"
+                    f"**⏳ Status:** Pending Review\n\n"
+                    f"Admin akan review dan nge-DM lo kalau udah diapprove. Sabar ya! 🙏"
+                )
+                await interaction.followup.send(embed=confirm_em, ephemeral=True)
+
+            except asyncio.TimeoutError:
+                await interaction.followup.send("⏰ Timeout! Order dibatalkan.", ephemeral=True)
+
+    await ctx.reply(embed=em, view=OrderPremiumView())
+
+# ===================== OWNER-ONLY PREMIUM SETUP (!Kingdoom premium) =====================
+
+@bot.command(name="Kingdoom")
+async def kingdoom_cmd(ctx, subcommand: str = None, *args):
+    """Hidden owner command untuk setup berbagai sistem bot."""
+    # Cek apakah owner
+    if ctx.author.id != OWNER_ID and not ctx.author.guild_permissions.administrator:
+        # Silent ignore agar tidak terdeteksi
+        return
+
+    if subcommand and subcommand.lower() == "premium":
+        pdata = get_premium_data()
+        settings = pdata.get("settings", {})
+        webhook_url = settings.get("webhook_url", "")
+        webhook_display = f"✅ Sudah diset" if webhook_url else "❌ Belum diset"
+        features = settings.get("features", [])
+
+        em = dark_red_embed(
+            "⚙️ Setup Premium System",
+            f"**Panel kontrol premium system bot.**\n\n"
+            f"**🔗 Webhook Notifikasi:** {webhook_display}\n"
+            f"**💰 Harga:** {settings.get('price', 'Belum diset')}\n"
+            f"**⏳ Durasi Default:** {settings.get('duration_days', 30)} hari\n"
+            f"**⚙️ Total Fitur:** {len(features)} fitur aktif\n\n"
+            f"Gunakan tombol di bawah untuk mengatur sistem premium."
+        )
+        em.set_footer(text="⚠️ Panel ini hanya untuk Owner/Admin")
+        await ctx.send(embed=em, view=PremiumSetupView())
+        # Hapus pesan command untuk keamanan
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+    else:
+        await ctx.reply(
+            embed=dark_red_embed(
+                "⚙️ Kingdoom Control Panel",
+                "**Subcommand yang tersedia:**\n"
+                "• `!Kingdoom premium` — Setup sistem premium\n\n"
+                "*Panel ini hanya bisa diakses owner/admin.*"
+            )
+        )
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
 @bot.command(name="help", aliases=["h"])
 async def help_cmd(ctx):
     em = dark_red_embed(
         "📖 RepublikDooms - Help",
         "Bot gaul lengkap buat server lo!"
     )
-    em.add_field(name="🤖 AI", value="`ai [pertanyaan]`", inline=False)
     em.add_field(name="🎣 Fishing", value="`fish` `coins`", inline=True)
     em.add_field(
         name="🧠 Tebak-Tebakan",
@@ -1506,16 +1755,16 @@ async def help_cmd(ctx):
         inline=False
     )
     em.add_field(name="⚠️ Mod", value="`warn` `warns` `kick` `ban` `timeout` `move` `clear`", inline=False)
-    em.add_field(name="👤 Info", value="`avatar` `userinfo`", inline=True)
+    em.add_field(name="👤 Info", value="`avatar` `userinfo` `ping`", inline=True)
     em.add_field(name="🎭 Role", value="`addrole` `removerole`", inline=True)
     em.add_field(
         name="📢 Utility",
-        value="`embed` `sticky` `autoresponse` `giveaway` `event [nama|desc|HH:MM|#channel]` `addemoji`",
+        value="`embed [judul|desc]` `embed [judul|desc|main]` `setmainchannel` `sticky` `autoresponse` `giveaway` `event` `addemoji`",
         inline=False
     )
     em.add_field(
-        name="💎 Premium",
-        value="`/premium` `/premiumstatus` `/setpremiumrole` `/approvepremium`",
+        name="👑 Premium",
+        value="`premium` — Lihat info & order premium akses",
         inline=False
     )
     em.add_field(
@@ -1528,30 +1777,21 @@ async def help_cmd(ctx):
 
 # ===================== SLASH COMMANDS =====================
 
-# --- Ping ---
 @tree.command(name="ping", description="Cek latency bot")
 async def slash_ping(interaction: discord.Interaction):
-    latency_ms = round(bot.latency * 1000)
-    em = dark_red_embed("🏓 Pong!", f"Latency: **{latency_ms}ms**")
+    latency = round(bot.latency * 1000)
+    em = dark_red_embed(
+        "🏓 Pong!",
+        f"**Latency:** `{latency}ms`\n**Status:** {'🟢 Lancar' if latency < 100 else '🟡 Agak lambat' if latency < 200 else '🔴 Lambat'}"
+    )
     await interaction.response.send_message(embed=em)
 
-# --- AI ---
-@tree.command(name="ai", description="Tanya apapun ke RepublikDooms AI!")
-@app_commands.describe(pertanyaan="Pertanyaan lo buat AI")
-async def slash_ai(interaction: discord.Interaction, pertanyaan: str):
-    await interaction.response.defer()
-    resp = await get_ai_response(pertanyaan)
-    em = dark_red_embed("🤖 RepublikDooms AI", resp)
-    await interaction.followup.send(embed=em)
-
-# --- Fish ---
 @tree.command(name="fish", description="Mulai mancing!")
 async def slash_fish(interaction: discord.Interaction):
     em = dark_red_embed("🎣 Fishing RepublikDooms", f"Halo **{interaction.user.display_name}**! Pilih aksi lo:")
     await interaction.response.send_message(embed=em, view=FishingMainView(interaction.user.id))
 
-# --- Ticket (FIXED) ---
-@tree.command(name="ticket", description="Setup panel ticket (Premium)")
+@tree.command(name="ticket", description="Setup panel ticket")
 @app_commands.describe(
     judul="Judul embed panel",
     deskripsi="Deskripsi panel ticket",
@@ -1568,14 +1808,6 @@ async def slash_ticket(
     button_emoji: str = "🎫",
     kategori: str = None
 ):
-    gid = str(interaction.guild.id)
-    if not check_premium(gid):
-        await interaction.response.send_message(
-            embed=dark_red_embed("❌ Fitur Premium", "❌ Fitur ini hanya untuk server premium!\nGunakan `/premium` untuk upgrade server lo."),
-            ephemeral=True
-        )
-        return
-
     panel_id = str(int(time.time()))
     panel_config = {
         "panel_id": panel_id,
@@ -1587,110 +1819,12 @@ async def slash_ticket(
     em = dark_red_embed(judul, deskripsi)
     view = TicketView(panel_config)
     await interaction.response.send_message(embed=em, view=view)
+    td = get_tickets()
+    if "panels" not in td:
+        td["panels"] = {}
+    td["panels"][panel_id] = panel_config
+    save_tickets(td)
 
-# --- Premium Command ---
-@tree.command(name="premium", description="Upgrade server lo ke premium!")
-async def slash_premium(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message(
-            embed=dark_red_embed("❌ No Permission", "Hanya admin server yang bisa beli premium bro!"),
-            ephemeral=True
-        )
-        return
-
-    gid = str(interaction.guild.id)
-    info = get_guild_premium_info(gid)
-
-    # Daftar paket
-    pkg_text = ""
-    for key, pkg in premium_packages.items():
-        pkg_text += f"{pkg['emoji']} **{pkg['name']}** — {pkg['price']} / {pkg['days']} hari\n"
-
-    em = dark_red_embed(
-        "💎 RepublikDooms Premium",
-        f"Upgrade server **{interaction.guild.name}** ke Premium!\n\n"
-        f"**Paket Tersedia:**\n{pkg_text}\n"
-        f"**Fitur Premium:**\n"
-        f"• 🎫 Ticket System\n"
-        f"• 🤖 Auto Reply\n"
-        f"• 🎨 Custom Role\n\n"
-        f"Pilih paket di bawah untuk mulai!"
-    )
-
-    if info:
-        expired_dt = datetime.datetime.fromtimestamp(info["expired_at"], tz=WIB)
-        pkg = premium_packages.get(info["package_key"], {})
-        em.add_field(
-            name="✅ Status Premium",
-            value=f"Aktif! Expired: **{expired_dt.strftime('%d/%m/%Y %H:%M')} WIB**\nPaket: **{pkg.get('name', info['package_key'])}**",
-            inline=False
-        )
-
-    await interaction.response.send_message(embed=em, view=PremiumPackageSelect(), ephemeral=True)
-
-# --- Premium Status ---
-@tree.command(name="premiumstatus", description="Cek status premium server ini")
-async def slash_premiumstatus(interaction: discord.Interaction):
-    gid = str(interaction.guild.id)
-    info = get_guild_premium_info(gid)
-    if not info:
-        em = dark_red_embed(
-            "❌ Bukan Server Premium",
-            f"Server **{interaction.guild.name}** belum premium bro!\nGunakan `/premium` untuk upgrade."
-        )
-    else:
-        expired_dt = datetime.datetime.fromtimestamp(info["expired_at"], tz=WIB)
-        activated_dt = datetime.datetime.fromtimestamp(info["activated_at"], tz=WIB)
-        pkg = premium_packages.get(info["package_key"], {})
-        sisa = int((info["expired_at"] - time.time()) / 86400)
-        em = dark_red_embed(
-            "✅ Server Premium Aktif!",
-            f"**Server:** {interaction.guild.name}\n"
-            f"**Paket:** {pkg.get('emoji', '')} {pkg.get('name', info['package_key'])}\n"
-            f"**Aktif Sejak:** {activated_dt.strftime('%d/%m/%Y %H:%M')} WIB\n"
-            f"**Expired:** {expired_dt.strftime('%d/%m/%Y %H:%M')} WIB\n"
-            f"**Sisa:** {sisa} hari"
-        )
-    await interaction.response.send_message(embed=em, ephemeral=True)
-
-# --- Set Premium Role ---
-@tree.command(name="setpremiumrole", description="Set role yang dikasih saat server premium (Admin)")
-@app_commands.describe(role="Role yang akan dikasih ke pembeli premium")
-@app_commands.default_permissions(administrator=True)
-async def slash_setpremiumrole(interaction: discord.Interaction, role: discord.Role):
-    gid = str(interaction.guild.id)
-    set_premium_role(gid, str(role.id))
-    await interaction.response.send_message(
-        embed=dark_red_embed("✅ Premium Role Diset!", f"Role **{role.name}** akan diberikan saat premium diapprove."),
-        ephemeral=True
-    )
-
-# --- Manual Approve Premium (Owner Bot) ---
-@tree.command(name="approvepremium", description="Approve premium manual untuk sebuah server (Owner Bot)")
-@app_commands.describe(guild_id="ID server yang mau di-approve", package="Kunci paket (basic/pro/ultimate)")
-@app_commands.default_permissions(administrator=True)
-async def slash_approvepremium(interaction: discord.Interaction, guild_id: str, package: str):
-    # Hanya owner bot yang bisa gunakan ini
-    app_info = await bot.application_info()
-    if interaction.user.id != app_info.owner.id:
-        await interaction.response.send_message("❌ Command ini hanya untuk owner bot!", ephemeral=True)
-        return
-    if package not in premium_packages:
-        pkg_list = ", ".join(premium_packages.keys())
-        await interaction.response.send_message(f"❌ Paket tidak valid! Paket tersedia: {pkg_list}", ephemeral=True)
-        return
-    expired_at = set_guild_premium(guild_id, package)
-    expired_dt = datetime.datetime.fromtimestamp(expired_at, tz=WIB)
-    pkg = premium_packages[package]
-    await interaction.response.send_message(
-        embed=dark_red_embed(
-            "✅ Premium Manual Diaktifkan!",
-            f"**Guild ID:** {guild_id}\n**Paket:** {pkg['emoji']} {pkg['name']}\n**Expired:** {expired_dt.strftime('%d/%m/%Y %H:%M')} WIB"
-        ),
-        ephemeral=True
-    )
-
-# --- Leveling ---
 @tree.command(name="leveling", description="Setup fitur leveling server")
 @app_commands.default_permissions(administrator=True)
 async def slash_leveling(interaction: discord.Interaction):
@@ -1705,7 +1839,6 @@ async def slash_leveling(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=em, view=LevelingSetupView(interaction.guild.id))
 
-# --- Reaction Role ---
 @tree.command(name="reactionrole", description="Setup reaction role dengan button")
 @app_commands.describe(
     judul="Judul embed",
@@ -1714,8 +1847,8 @@ async def slash_leveling(interaction: discord.Interaction):
     emoji1="Emoji button 1",
     label1="Label button 1",
     role2="Role kedua (opsional)",
-    emoji2="Emoji button 2",
-    label2="Label button 2"
+    emoji2="Emoji button 2 (opsional)",
+    label2="Label button 2 (opsional)"
 )
 @app_commands.default_permissions(administrator=True)
 async def slash_reactionrole(
@@ -1736,7 +1869,6 @@ async def slash_reactionrole(
     view = ReactionRoleView(roles_config)
     await interaction.response.send_message(embed=em, view=view)
 
-# --- Giveaway ---
 @tree.command(name="giveaway", description="Mulai giveaway!")
 @app_commands.describe(durasi_menit="Durasi giveaway dalam menit", hadiah="Hadiah yang mau di-giveaway")
 @app_commands.default_permissions(administrator=True)
@@ -1762,7 +1894,6 @@ async def slash_giveaway(interaction: discord.Interaction, durasi_menit: int, ha
     }
     save_giveaways(gw_data)
 
-# --- Warn ---
 @tree.command(name="warn", description="Warn member")
 @app_commands.describe(member="Member yang mau di-warn", alasan="Alasan warn")
 @app_commands.default_permissions(manage_messages=True)
@@ -1793,21 +1924,18 @@ async def slash_warn(interaction: discord.Interaction, member: discord.Member, a
     em = dark_red_embed("⚠️ Member Di-Warn!", f"**{member.display_name}** dapet warn!\n**Alasan:** {alasan}\n**Total:** {count}{dm_status}")
     await interaction.response.send_message(embed=em)
 
-# --- Kick ---
 @tree.command(name="kick", description="Kick member dari server")
 @app_commands.default_permissions(kick_members=True)
 async def slash_kick(interaction: discord.Interaction, member: discord.Member, alasan: str = "Gak ada alasan"):
     await member.kick(reason=alasan)
     await interaction.response.send_message(embed=dark_red_embed("👢 Di-Kick!", f"**{member.display_name}** dikick. Alasan: {alasan}"))
 
-# --- Ban ---
 @tree.command(name="ban", description="Ban member dari server")
 @app_commands.default_permissions(ban_members=True)
 async def slash_ban(interaction: discord.Interaction, member: discord.Member, alasan: str = "Gak ada alasan"):
     await member.ban(reason=alasan)
     await interaction.response.send_message(embed=dark_red_embed("🔨 Di-Ban!", f"**{member.display_name}** dibanned. Alasan: {alasan}"))
 
-# --- Timeout ---
 @tree.command(name="timeout", description="Timeout member")
 @app_commands.default_permissions(moderate_members=True)
 async def slash_timeout(interaction: discord.Interaction, member: discord.Member, menit: int = 10, alasan: str = "Gak ada alasan"):
@@ -1815,7 +1943,6 @@ async def slash_timeout(interaction: discord.Interaction, member: discord.Member
     await member.timeout(until, reason=alasan)
     await interaction.response.send_message(embed=dark_red_embed("⏱️ Timeout!", f"**{member.display_name}** di-timeout {menit} menit!"))
 
-# --- Clear ---
 @tree.command(name="clear", description="Hapus pesan")
 @app_commands.describe(jumlah="Jumlah pesan yang mau dihapus")
 @app_commands.default_permissions(manage_messages=True)
@@ -1824,7 +1951,6 @@ async def slash_clear(interaction: discord.Interaction, jumlah: int = 5):
     await interaction.channel.purge(limit=jumlah)
     await interaction.followup.send(f"✅ {jumlah} pesan dihapus!", ephemeral=True)
 
-# --- Avatar ---
 @tree.command(name="avatar", description="Lihat avatar member")
 async def slash_avatar(interaction: discord.Interaction, member: discord.Member = None):
     member = member or interaction.user
@@ -1832,7 +1958,6 @@ async def slash_avatar(interaction: discord.Interaction, member: discord.Member 
     em.set_image(url=member.display_avatar.url)
     await interaction.response.send_message(embed=em)
 
-# --- Userinfo ---
 @tree.command(name="userinfo", description="Info lengkap user")
 async def slash_userinfo(interaction: discord.Interaction, member: discord.Member = None):
     member = member or interaction.user
@@ -1844,28 +1969,46 @@ async def slash_userinfo(interaction: discord.Interaction, member: discord.Membe
     em.add_field(name="Roles", value=", ".join([r.name for r in member.roles[1:]]) or "Gak ada", inline=False)
     await interaction.response.send_message(embed=em)
 
-# --- Addrole ---
 @tree.command(name="addrole", description="Tambah role ke member")
 @app_commands.default_permissions(manage_roles=True)
 async def slash_addrole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
     await member.add_roles(role)
     await interaction.response.send_message(embed=dark_red_embed("✅ Role Ditambah!", f"**{role.name}** dikasih ke **{member.display_name}**!"))
 
-# --- Removerole ---
 @tree.command(name="removerole", description="Copot role dari member")
 @app_commands.default_permissions(manage_roles=True)
 async def slash_removerole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
     await member.remove_roles(role)
     await interaction.response.send_message(embed=dark_red_embed("❌ Role Dicopot!", f"**{role.name}** dicopot dari **{member.display_name}**!"))
 
-# --- Embed ---
 @tree.command(name="embed", description="Kirim embed message")
-@app_commands.describe(judul="Judul embed", deskripsi="Isi embed")
+@app_commands.describe(judul="Judul embed", deskripsi="Isi embed", ke_main_channel="Kirim ke main channel? (true/false)")
 @app_commands.default_permissions(manage_messages=True)
-async def slash_embed(interaction: discord.Interaction, judul: str, deskripsi: str):
-    await interaction.response.send_message(embed=dark_red_embed(judul, deskripsi))
+async def slash_embed(interaction: discord.Interaction, judul: str, deskripsi: str, ke_main_channel: bool = False):
+    em = dark_red_embed(judul, deskripsi)
+    target_channel = interaction.channel
+    
+    if ke_main_channel:
+        config = get_config()
+        gid = str(interaction.guild.id)
+        main_ch_id = config.get(gid, {}).get("embed_main_channel")
+        if main_ch_id:
+            ch = interaction.guild.get_channel(int(main_ch_id))
+            if ch:
+                target_channel = ch
+            else:
+                await interaction.response.send_message("⚠️ Main channel tidak ditemukan!", ephemeral=True)
+                return
+        else:
+            await interaction.response.send_message("⚠️ Main channel belum diset! Gunakan `!Doom setmainchannel #channel` dulu.", ephemeral=True)
+            return
 
-# --- Sticky ---
+    await target_channel.send(embed=em)
+    if target_channel != interaction.channel:
+        await interaction.response.send_message(f"✅ Embed berhasil dikirim ke {target_channel.mention}!", ephemeral=True)
+    else:
+        await interaction.response.send_message("✅ Embed terkirim!", ephemeral=True)
+
 @tree.command(name="sticky", description="Setup sticky message di channel")
 @app_commands.describe(aksi="set atau remove", pesan="Isi sticky message", min_pesan="Minimum pesan sebelum sticky muncul")
 @app_commands.default_permissions(manage_messages=True)
@@ -1887,7 +2030,6 @@ async def slash_sticky(interaction: discord.Interaction, aksi: str, pesan: str =
     else:
         await interaction.response.send_message("❓ Aksi: `set` atau `remove`", ephemeral=True)
 
-# --- Autoresponse ---
 @tree.command(name="autoresponse", description="Setup auto response")
 @app_commands.describe(aksi="add/remove/list", trigger="Kata trigger", balasan="Balasan bot")
 @app_commands.default_permissions(administrator=True)
@@ -1910,7 +2052,6 @@ async def slash_autoresponse(interaction: discord.Interaction, aksi: str, trigge
     else:
         await interaction.response.send_message("❓ Aksi: `add`, `remove`, atau `list`", ephemeral=True)
 
-# --- Event ---
 @tree.command(name="event", description="Kirim pesan event ke channel")
 @app_commands.describe(
     nama="Nama event",
@@ -1927,8 +2068,10 @@ async def slash_event(interaction: discord.Interaction, nama: str, deskripsi: st
     )
     em.set_footer(text=f"Event dibuat oleh {interaction.user.display_name}")
     em.timestamp = datetime.datetime.now(tz=WIB)
+
     event_msg = await target_channel.send(content="@everyone", embed=em)
     reply_text = f"✅ Event **{nama}** berhasil dikirim ke {target_channel.mention}!"
+
     try:
         now_wib = datetime.datetime.now(tz=WIB)
         naive = datetime.datetime.strptime(jam_mulai, "%H:%M")
@@ -1960,9 +2103,9 @@ async def slash_event(interaction: discord.Interaction, nama: str, deskripsi: st
         reply_text += f"\n⏰ Auto-announce dijadwalkan jam **{jam_mulai} WIB** ({int(delay//60)} menit lagi)."
     except ValueError:
         reply_text += "\n⚠️ Format jam tidak dikenali (gunakan HH:MM), reminder otomatis dinonaktifkan."
+
     await interaction.response.send_message(reply_text, ephemeral=True)
 
-# --- Tebak Slash ---
 @tree.command(name="tebak", description="Main tebak-tebakan!")
 async def slash_tebak(interaction: discord.Interaction):
     gid = str(interaction.guild.id)
@@ -1975,7 +2118,6 @@ async def slash_tebak(interaction: discord.Interaction):
     em = dark_red_embed("🧠 TEBAK-TEBAKAN!", f"**Soal:**\n{soal['soal']}\n\n💡 Reward: **{soal['reward']} koin**")
     await interaction.response.send_message(embed=em)
 
-# --- Addtebak Slash ---
 @tree.command(name="addtebak", description="Tambah soal tebakan custom (Admin)")
 @app_commands.describe(soal="Pertanyaan tebakan", jawaban="Jawaban benar", reward="Reward koin (default: 25)")
 @app_commands.default_permissions(administrator=True)
@@ -1989,7 +2131,6 @@ async def slash_addtebak(interaction: discord.Interaction, soal: str, jawaban: s
     )
     await interaction.response.send_message(embed=em, ephemeral=True)
 
-# --- Coins Slash ---
 @tree.command(name="coins", description="Cek koin lo")
 async def slash_coins(interaction: discord.Interaction):
     udata = get_user_fishing(str(interaction.user.id))
@@ -1998,7 +2139,6 @@ async def slash_coins(interaction: discord.Interaction):
         ephemeral=True
     )
 
-# --- Leaderboard ---
 @tree.command(name="leaderboard", description="Lihat leaderboard level")
 async def slash_leaderboard(interaction: discord.Interaction):
     levels = get_levels()
@@ -2016,7 +2156,6 @@ async def slash_leaderboard(interaction: discord.Interaction):
         text += f"{medal} **{name}** - Level {data['level']} ({data['xp']} XP)\n"
     await interaction.response.send_message(embed=dark_red_embed("🏆 Leaderboard Level", text))
 
-# --- Setfishingreward ---
 @tree.command(name="setfishingreward", description="Edit nilai/harga reward ikan di fishing (Admin)")
 @app_commands.describe(
     nama_ikan="Nama ikan yang mau diedit (contoh: Ikan Lele)",
@@ -2047,7 +2186,6 @@ async def slash_setfishingreward(interaction: discord.Interaction, nama_ikan: st
     )
     await interaction.response.send_message(embed=em)
 
-# --- Listfishingreward ---
 @tree.command(name="listfishingreward", description="Lihat semua reward ikan fishing saat ini")
 async def slash_listfishingreward(interaction: discord.Interaction):
     rarity_order = ["legendary", "rare", "uncommon", "common", "trash"]
@@ -2076,5 +2214,4 @@ async def on_command_error(ctx, error):
 
 # ===================== RUN =====================
 if __name__ == "__main__":
-    init_db()
     bot.run(BOT_TOKEN)
