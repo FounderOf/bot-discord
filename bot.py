@@ -46,7 +46,7 @@ premium_packages = {
 }
 
 # Command yang butuh premium (guild-based)
-premium_commands = ["ticket", "autoreply", "customrole"]
+premium_commands = ["ticket", "leveling", "ai"]
 
 # ===================== DATABASE (SQLite) =====================
 DB_PATH = DATA_DIR / "premium.db"
