@@ -8,6 +8,8 @@ import random
 import time
 import datetime
 import zoneinfo
+import hashlib
+import aiohttp
 from pathlib import Path
 
 # Timezone WIB (UTC+7)
@@ -15,8 +17,8 @@ WIB = zoneinfo.ZoneInfo("Asia/Jakarta")
 
 # ===================== CONFIG =====================
 PREFIX = "!Doom"
-BOT_TOKEN = os.getenv("DISCORD_TOKEN", "YOUR_BOT_TOKEN_HERE")
-OWNER_ID = int(os.getenv("OWNER_ID", "0"))  # Set OWNER_ID di environment variable
+BOT_TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("DISCORD_BOT_TOKEN") or "YOUR_BOT_TOKEN_HERE"
+OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 DARK_RED = 0x8B0000
 
 DATA_DIR = Path("data")
@@ -44,7 +46,8 @@ def get_prefix(bot, message):
 bot = commands.Bot(command_prefix=get_prefix, intents=intents, help_command=None, case_insensitive=True)
 tree = bot.tree
 
-# ===================== FISHING DATA =====================
+# ===================== DEFAULT FISHING DATA =====================
+# Default rods - used as fallback jika belum ada custom rod di JSON
 RODS = {
     "Pancing Bambu": {"tier": 1, "price": 50, "catch_bonus": 1.0, "emoji": "🎋"},
     "Pancing Kayu": {"tier": 2, "price": 150, "catch_bonus": 1.3, "emoji": "🪵"},
@@ -62,18 +65,22 @@ BAITS = {
     "Ikan Kecil": {"price": 100, "bonus": 3.5, "emoji": "🐟"},
 }
 
-FISHES = [
-    {"name": "Ikan Lele", "value": 15, "rarity": "common", "emoji": "🐟"},
-    {"name": "Ikan Mas", "value": 25, "rarity": "common", "emoji": "🐠"},
-    {"name": "Ikan Gurame", "value": 40, "rarity": "uncommon", "emoji": "🐡"},
-    {"name": "Ikan Salmon", "value": 60, "rarity": "uncommon", "emoji": "🐟"},
-    {"name": "Ikan Tuna", "value": 100, "rarity": "rare", "emoji": "🐟"},
-    {"name": "Ikan Hiu Kecil", "value": 200, "rarity": "rare", "emoji": "🦈"},
-    {"name": "Ikan Duyung", "value": 500, "rarity": "legendary", "emoji": "🧜"},
-    {"name": "Ikan Naga", "value": 1000, "rarity": "legendary", "emoji": "🐉"},
-    {"name": "Sampah", "value": 0, "rarity": "trash", "emoji": "🗑️"},
-    {"name": "Bot Bekas", "value": 5, "rarity": "trash", "emoji": "🤖"},
+# Default fishes - digunakan sebagai fallback jika belum ada custom fish di JSON
+DEFAULT_FISHES = [
+    {"name": "Ikan Lele", "sell_price": 15, "rarity": "common", "luck_chance": 50, "emoji": "🐟"},
+    {"name": "Ikan Mas", "sell_price": 25, "rarity": "common", "luck_chance": 45, "emoji": "🐠"},
+    {"name": "Ikan Gurame", "sell_price": 40, "rarity": "uncommon", "luck_chance": 25, "emoji": "🐡"},
+    {"name": "Ikan Salmon", "sell_price": 60, "rarity": "uncommon", "luck_chance": 20, "emoji": "🐟"},
+    {"name": "Ikan Tuna", "sell_price": 100, "rarity": "rare", "luck_chance": 10, "emoji": "🐟"},
+    {"name": "Ikan Hiu Kecil", "sell_price": 200, "rarity": "rare", "luck_chance": 7, "emoji": "🦈"},
+    {"name": "Ikan Duyung", "sell_price": 500, "rarity": "legendary", "luck_chance": 2, "emoji": "🧜"},
+    {"name": "Ikan Naga", "sell_price": 1000, "rarity": "legendary", "luck_chance": 1, "emoji": "🐉"},
+    {"name": "Sampah", "sell_price": 0, "rarity": "trash", "luck_chance": 13, "emoji": "🗑️"},
+    {"name": "Bot Bekas", "sell_price": 5, "rarity": "trash", "luck_chance": 8, "emoji": "🤖"},
 ]
+
+# Untuk backward compat dengan kode lama yang pakai FISHES
+FISHES = DEFAULT_FISHES
 
 SHOP_REWARDS = {
     "Role VIP": {"price": 500, "type": "role", "description": "Role VIP eksklusif buat lo"},
@@ -109,18 +116,35 @@ JAWABAN_BENAR_GAUL = [
     "KEREN ABIS BRO! Gw kagum sama lo, jawaban lo tepat sasaran! 🎯",
 ]
 
+# ===================== HELPER FUNCTIONS =====================
+
 def get_custom_tebakan():
     return load_json("custom_tebakan.json", [])
 
 def save_custom_tebakan(data):
     save_json("custom_tebakan.json", data)
 
-# ===================== HELPER FUNCTIONS =====================
 def get_fishing_data():
     return load_json("fishing.json", {})
 
 def save_fishing_data(data):
     save_json("fishing.json", data)
+
+def get_custom_fishes():
+    """Ambil daftar ikan custom dari JSON. Jika kosong, kembalikan DEFAULT_FISHES."""
+    custom = load_json("custom_fishes.json", [])
+    return custom if custom else DEFAULT_FISHES.copy()
+
+def save_custom_fishes(data):
+    save_json("custom_fishes.json", data)
+
+def get_custom_rods():
+    """Ambil daftar rod custom dari JSON. Jika kosong, kembalikan RODS default."""
+    custom = load_json("custom_rods.json", {})
+    return custom if custom else RODS.copy()
+
+def save_custom_rods(data):
+    save_json("custom_rods.json", data)
 
 def get_user_fishing(user_id: str):
     data = get_fishing_data()
@@ -196,28 +220,47 @@ def get_premium_orders():
 def save_premium_orders(data):
     save_json("premium_orders.json", data)
 
+# ===================== [NEW] MAINTENANCE HELPERS =====================
+
+def get_maintenance_data():
+    """Ambil data maintenance per guild dari JSON."""
+    return load_json("maintenance.json", {})
+
+def save_maintenance_data(data):
+    """Simpan data maintenance ke JSON."""
+    save_json("maintenance.json", data)
+
+# ===================== EMBED HELPER =====================
+
 def dark_red_embed(title="", description="", **kwargs):
     em = discord.Embed(title=title, description=description, color=DARK_RED, **kwargs)
     return em
 
+# ===================== IN-MEMORY STATE =====================
 fishing_cooldowns = {}
 active_tebakan = {}
 
 # ===================== PREMIUM HELPERS =====================
+
 def is_premium(user_id: str, feature: str = None) -> bool:
-    """Cek apakah user punya premium. Jika feature diisi, cek feature spesifik."""
+    """
+    Cek apakah user punya premium (per-user, bukan per-server).
+    Jika feature diisi, cek apakah feature spesifik tersedia untuk user.
+    Premium expired secara otomatis tidak dianggap aktif.
+    """
     pdata = get_premium_data()
     uid = str(user_id)
     users = pdata.get("users", {})
     if uid not in users:
         return False
     user_premium = users[uid]
-    # Cek expiry
+    # Cek expiry - jika expired, otomatis tidak aktif
     if user_premium.get("expires_at"):
         if time.time() > user_premium["expires_at"]:
             return False
     if not user_premium.get("active", False):
         return False
+    # Jika feature spesifik diminta, cek di settings
     if feature:
         settings = pdata.get("settings", {})
         premium_features = settings.get("features", [])
@@ -228,9 +271,51 @@ def get_premium_settings():
     pdata = get_premium_data()
     return pdata.get("settings", {})
 
+async def send_premium_denied(ctx_or_interaction, feature_name: str = None):
+    """Kirim pesan penolakan ke user non-premium secara konsisten."""
+    msg = (
+        "❌ **Fitur ini hanya untuk pengguna premium!**\n\n"
+        f"{'Fitur `' + feature_name + '` ' if feature_name else 'Fitur ini '}tidak bisa diakses tanpa premium.\n"
+        "Ketik `!Doom premium` untuk info dan cara order premium! 👑"
+    )
+    em = dark_red_embed("🔒 Premium Only", msg)
+    if isinstance(ctx_or_interaction, commands.Context):
+        await ctx_or_interaction.reply(embed=em)
+    else:
+        if ctx_or_interaction.response.is_done():
+            await ctx_or_interaction.followup.send(embed=em, ephemeral=True)
+        else:
+            await ctx_or_interaction.response.send_message(embed=em, ephemeral=True)
+
+async def validate_webhook_url(webhook_url: str) -> tuple[bool, str]:
+    """
+    Validasi webhook URL dengan mencoba mengirim test message.
+    Returns (is_valid, error_message)
+    """
+    # Cek format URL dasar
+    if not webhook_url.startswith("https://discord.com/api/webhooks/"):
+        return False, "URL tidak valid! Harus berupa Discord Webhook URL yang dimulai dengan `https://discord.com/api/webhooks/`"
+    # Coba kirim test message ke webhook untuk membuktikan URL valid
+    try:
+        async with aiohttp.ClientSession() as session:
+            webhook = discord.Webhook.from_url(webhook_url, session=session)
+            test_em = discord.Embed(
+                title="✅ Webhook Test",
+                description="Webhook berhasil terhubung! Notifikasi premium akan dikirim ke sini.",
+                color=0x00FF00
+            )
+            test_em.set_footer(text="RepublikDooms Premium System - Test Connection")
+            await webhook.send(embed=test_em, username="RepublikDooms Bot")
+            return True, ""
+    except discord.NotFound:
+        return False, "Webhook tidak ditemukan! Pastikan webhook masih aktif dan URL-nya benar."
+    except discord.Forbidden:
+        return False, "Bot tidak punya izin kirim ke webhook ini! Cek permission channel webhook."
+    except Exception as e:
+        return False, f"Webhook gagal terkoneksi: {str(e)[:100]}"
+
 async def send_to_webhook(webhook_url: str, embed: discord.Embed, view=None):
     """Kirim embed ke webhook URL."""
-    import aiohttp
     try:
         async with aiohttp.ClientSession() as session:
             webhook = discord.Webhook.from_url(webhook_url, session=session)
@@ -240,7 +325,25 @@ async def send_to_webhook(webhook_url: str, embed: discord.Embed, view=None):
         print(f"Webhook error: {e}")
         return False
 
+async def notify_premium_expired(user_id: int):
+    """Kirim notifikasi DM ke user bahwa premium mereka telah expired."""
+    try:
+        user = await bot.fetch_user(user_id)
+        em = dark_red_embed(
+            "⏰ Premium Kamu Telah Berakhir!",
+            f"Halo **{user.display_name}**!\n\n"
+            "Masa aktif premium kamu sudah **BERAKHIR**. 😢\n\n"
+            "Kamu tidak lagi bisa mengakses fitur-fitur premium.\n"
+            "Perpanjang premium kamu dengan ketik `!Doom premium` di server!\n\n"
+            "Makasih udah pake premium RepublikDooms sebelumnya! 🙏"
+        )
+        em.set_footer(text="RepublikDooms Premium System")
+        await user.send(embed=em)
+    except Exception as e:
+        print(f"Gagal kirim notif expired ke user {user_id}: {e}")
+
 # ===================== EVENTS =====================
+
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} udah nyala bro!")
@@ -254,26 +357,81 @@ async def on_ready():
         print(f"❌ Sync error: {e}")
     check_giveaways.start()
     check_sticky.start()
+    check_premium_expiry.start()
 
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # ===== HANDLER MANUAL: !Kingdoom premium =====
-    content_stripped = message.content.strip()
-    if content_stripped.lower() == "!kingdoom premium":
-        if message.guild:
-            is_owner = message.author.id == OWNER_ID
-            is_admin = message.author.guild_permissions.administrator
-            if is_owner or is_admin:
-                ctx = await bot.get_context(message)
-                await premium_setup_panel(ctx)
-        return  # stop processing, jangan lanjut ke bot.process_commands
-    # ==============================================
-
     guild_id = str(message.guild.id) if message.guild else None
-    content_lower = message.content.lower()
+    content_stripped = message.content.strip()
+    content_lower = content_stripped.lower()
+
+    # ===================== [NEW] MAINTENANCE MODE CHECK =====================
+    # Cek maintenance mode sebelum memproses apapun
+    if guild_id:
+        mdata = get_maintenance_data()
+        guild_maint = mdata.get(guild_id, {})
+        if guild_maint.get("enabled", False):
+            main_ch_id = guild_maint.get("main_channel")
+            # Jika ada main channel dan pesan bukan dari main channel
+            if main_ch_id and str(message.channel.id) != str(main_ch_id):
+                # Jika pesan adalah command bot, kirim pesan maintenance
+                is_bot_command = any(
+                    content_lower.startswith(p.lower())
+                    for p in ["!doom ", "!kingdoom ", "!doom", "!kingdoom"]
+                )
+                if is_bot_command:
+                    maint_msg = guild_maint.get(
+                        "message",
+                        "🔧 Bot sedang dalam **maintenance**. Harap gunakan channel utama atau tunggu sebentar!"
+                    )
+                    em = dark_red_embed(
+                        "🔧 Mode Maintenance Aktif",
+                        f"{maint_msg}\n\n"
+                        f"➡️ Bot hanya aktif di <#{main_ch_id}> saat ini."
+                    )
+                    await message.channel.send(embed=em, delete_after=10)
+                    return  # Jangan proses command
+                else:
+                    # Pesan biasa di luar main channel - skip semua fitur bot
+                    return
+
+    # ===================== HANDLER MANUAL: !Kingdoom premium =====================
+    if content_lower in ["!kingdoom premium", "!doom premium"] and message.guild:
+        is_owner = message.author.id == OWNER_ID
+        is_admin = message.author.guild_permissions.administrator
+        if is_owner or is_admin:
+            ctx = await bot.get_context(message)
+            await premium_setup_panel(ctx)
+        else:
+            # User biasa → arahkan ke command premium user
+            ctx = await bot.get_context(message)
+            await premium_user_cmd(ctx)
+        return
+
+    # ===================== [NEW] HANDLER: !Kingdoom setfishing =====================
+    if content_lower in ["!kingdoom setfishing", "!doom setfishing"] and message.guild:
+        is_owner = message.author.id == OWNER_ID
+        is_admin = message.author.guild_permissions.administrator
+        if is_owner or is_admin:
+            ctx = await bot.get_context(message)
+            await fishing_setup_panel(ctx)
+        else:
+            await message.channel.send("❌ Command ini hanya untuk admin/owner!")
+        return
+
+    # ===================== [NEW] HANDLER: !Kingdoom maintenance =====================
+    if content_lower in ["!kingdoom maintenance", "!doom maintenance"] and message.guild:
+        is_owner = message.author.id == OWNER_ID
+        is_admin = message.author.guild_permissions.administrator
+        if is_owner or is_admin:
+            ctx = await bot.get_context(message)
+            await maintenance_panel(ctx)
+        else:
+            await message.channel.send("❌ Command ini hanya untuk admin/owner!")
+        return
 
     # Auto response
     if guild_id:
@@ -284,26 +442,39 @@ async def on_message(message):
                     await message.channel.send(response)
                     break
 
-    # Tebak-tebakan answer check
+    # ===================== [IMPROVED] TEBAK-TEBAKAN ANSWER CHECK =====================
+    # Case insensitive, ignore extra spaces, partial matching jika keyword ada
     if guild_id and guild_id in active_tebakan:
         tb = active_tebakan[guild_id]
-        if message.author.id != tb["asker"] and tb["jawaban"].lower() in content_lower:
-            udata = get_user_fishing(str(message.author.id))
-            reward = tb["reward"]
-            udata["coins"] += reward
-            save_user_fishing(str(message.author.id), udata)
-            gaul_response = random.choice(JAWABAN_BENAR_GAUL)
-            em = dark_red_embed(
-                "🎉 BENERRR!!!",
-                f"{gaul_response}\n\n"
-                f"**{message.author.display_name}** jawab bener!\n"
-                f"💰 Dapet **+{reward} koin** cuy!\n"
-                f"✅ Jawaban: **{tb['jawaban'].title()}**\n"
-                f"🪙 Total koin lo: **{udata['coins']}**"
+        if message.author.id != tb["asker"]:
+            # Normalize: lowercase + strip extra spaces
+            user_answer = " ".join(content_stripped.lower().split())
+            correct_answer = " ".join(tb["jawaban"].lower().split())
+
+            # Cek 3 cara: exact match, message contains answer, atau answer contains message
+            is_correct = (
+                user_answer == correct_answer or          # Exact match
+                correct_answer in user_answer or          # Jawaban ada di dalam pesan user
+                user_answer in correct_answer             # Pesan user adalah bagian dari jawaban
             )
-            em.set_thumbnail(url=message.author.display_avatar.url)
-            await message.channel.send(embed=em)
-            del active_tebakan[guild_id]
+
+            if is_correct:
+                udata = get_user_fishing(str(message.author.id))
+                reward = tb["reward"]
+                udata["coins"] += reward
+                save_user_fishing(str(message.author.id), udata)
+                gaul_response = random.choice(JAWABAN_BENAR_GAUL)
+                em = dark_red_embed(
+                    "🎉 BENERRR!!!",
+                    f"{gaul_response}\n\n"
+                    f"**{message.author.display_name}** jawab bener!\n"
+                    f"💰 Dapet **+{reward} koin** cuy!\n"
+                    f"✅ Jawaban: **{tb['jawaban'].title()}**\n"
+                    f"🪙 Total koin lo: **{udata['coins']}**"
+                )
+                em.set_thumbnail(url=message.author.display_avatar.url)
+                await message.channel.send(embed=em)
+                del active_tebakan[guild_id]
 
     # Leveling
     if guild_id and message.content and not message.content.startswith(PREFIX):
@@ -375,6 +546,7 @@ async def handle_leveling(message):
     save_levels(levels)
 
 # ===================== TASKS =====================
+
 @tasks.loop(seconds=30)
 async def check_giveaways():
     gw_data = get_giveaways()
@@ -416,6 +588,29 @@ async def check_giveaways():
 @tasks.loop(seconds=60)
 async def check_sticky():
     pass  # handled in on_message
+
+@tasks.loop(hours=1)
+async def check_premium_expiry():
+    """
+    [NEW] Cek premium expiry setiap jam.
+    Kirim notifikasi DM ke user yang premiumnya sudah expired.
+    """
+    pdata = get_premium_data()
+    users = pdata.get("users", {})
+    now = time.time()
+    changed = False
+    for uid, udata in users.items():
+        if udata.get("active") and udata.get("expires_at"):
+            if now > udata["expires_at"]:
+                # Tandai sebagai expired jika belum ditandai
+                if not udata.get("expired_notified"):
+                    users[uid]["expired_notified"] = True
+                    changed = True
+                    # Kirim notifikasi DM
+                    await notify_premium_expired(int(uid))
+    if changed:
+        pdata["users"] = users
+        save_premium_data(pdata)
 
 # ===================== VIEWS =====================
 
@@ -470,57 +665,99 @@ class TicketCloseView(discord.ui.View):
         await asyncio.sleep(5)
         await interaction.channel.delete()
 
-class FishingView(discord.ui.View):
-    def __init__(self, user_id):
-        super().__init__(timeout=60)
-        self.user_id = user_id
+# ===================== [IMPROVED] FISHING VIEWS =====================
 
-    @discord.ui.button(label="🎣 Mancing", style=discord.ButtonStyle.danger)
-    async def fish(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("❌ Ini bukan mancing lo bro, jangan gangguin!", ephemeral=True)
-            return
-        now = time.time()
-        uid = str(interaction.user.id)
-        if uid in fishing_cooldowns and now - fishing_cooldowns[uid] < 10:
-            sisa = round(10 - (now - fishing_cooldowns[uid]))
-            await interaction.response.send_message(f"⏳ Santai bro! Tungguin dulu **{sisa} detik** lagi. Pancingnya capek juga wkwk", ephemeral=True)
-            return
-        fishing_cooldowns[uid] = now
-        udata = get_user_fishing(uid)
-        rod = RODS.get(udata["rod"], RODS["Pancing Bambu"])
-        bait_list = udata.get("bait", {})
-        bait_bonus = 1.0
-        used_bait = None
-        for bname, qty in list(bait_list.items()):
-            if qty > 0 and bname in BAITS:
-                bait_bonus = BAITS[bname]["bonus"]
-                bait_list[bname] -= 1
-                if bait_list[bname] <= 0:
-                    del bait_list[bname]
-                used_bait = bname
-                break
-        udata["bait"] = bait_list
-        weights = []
-        fish_pool = FISHES.copy()
-        for f in fish_pool:
-            w = {"legendary": 2, "rare": 10, "uncommon": 25, "common": 50, "trash": 13}[f["rarity"]]
-            weights.append(w * rod["catch_bonus"] * bait_bonus if f["rarity"] != "trash" else w)
-        caught = random.choices(fish_pool, weights=weights, k=1)[0]
-        coins_earned = int(caught["value"] * rod["catch_bonus"] * bait_bonus)
-        udata["coins"] += coins_earned
-        udata["total_catch"] += 1
-        udata["inventory"].append(caught["name"])
-        save_user_fishing(uid, udata)
-        rarity_colors = {"legendary": "⭐⭐⭐", "rare": "⭐⭐", "uncommon": "⭐", "common": "", "trash": "💩"}
+def build_fishing_result_embed(user_display_name: str, caught: dict, rod_data: dict, rod_name: str, used_bait: str, user_coins: int) -> tuple[discord.Embed, bool]:
+    """
+    Build embed hasil mancing.
+    Returns (embed, is_rare_notification)
+    is_rare_notification = True jika ikan rare/legendary (perlu embed spesial)
+    """
+    rarity = caught.get("rarity", "common")
+    rarity_stars = {"legendary": "⭐⭐⭐", "rare": "⭐⭐", "uncommon": "⭐", "common": "", "trash": "💩"}
+    rarity_badge = rarity_stars.get(rarity, "")
+
+    is_rare = rarity in ("rare", "legendary")
+
+    if is_rare:
+        # Embed spesial untuk rare/legendary
+        color = 0xFFD700 if rarity == "legendary" else 0x9B59B6
+        border = "✨" * 10 if rarity == "legendary" else "💎" * 8
+        em = discord.Embed(
+            title=f"{caught['emoji']} {'🏆 LEGENDARIS!' if rarity == 'legendary' else '💎 LANGKA!'} {caught['emoji']}",
+            description=(
+                f"{border}\n\n"
+                f"**WOW! {user_display_name}** dapet ikan {'LEGENDARY' if rarity == 'legendary' else 'RARE'}!\n\n"
+                f"🐟 **{caught['name']}** {rarity_badge}\n"
+                f"💰 Jual seharga: **{caught['sell_price']} koin**\n"
+                f"🎣 Rod: {rod_data.get('emoji', '🎣')} {rod_name}\n"
+                + (f"🪱 Umpan: {used_bait}" if used_bait else "⚠️ Tanpa umpan!") +
+                f"\n\n{border}"
+            ),
+            color=color
+        )
+        em.set_footer(text=f"🪙 Total koin: {user_coins} | Jual ikan via tombol Jual Ikan!")
+    else:
+        # Embed standar untuk common/uncommon/trash
         em = dark_red_embed(
             f"{caught['emoji']} Hasil Mancing!",
-            f"**{interaction.user.display_name}** dapet **{caught['name']}** {rarity_colors[caught['rarity']]}\n"
-            f"🪙 +{coins_earned} koin (Total: {udata['coins']})\n"
-            f"🎣 Rod: {rod['emoji']} {udata['rod']}\n"
+            f"**{user_display_name}** dapet **{caught['name']}** {rarity_badge}\n"
+            f"💰 Harga jual: **{caught['sell_price']} koin**\n"
+            f"🎣 Rod: {rod_data.get('emoji', '🎣')} {rod_name}\n"
             + (f"🪱 Umpan: {used_bait}" if used_bait else "⚠️ Gak pake umpan, hasilnya bisa lebih jelek!")
         )
-        await interaction.response.edit_message(embed=em, view=FishingMainView(interaction.user.id))
+        em.set_footer(text=f"🪙 Total koin: {user_coins} | Jual ikan via tombol Jual Ikan!")
+
+    return em, is_rare
+
+def do_fishing_catch(uid: str) -> tuple[dict, dict, str, str]:
+    """
+    Logic inti mancing. Returns (caught_fish, rod_data, rod_name, used_bait_name).
+    Tidak lagi memberi coin otomatis - coin hanya dari jual ikan.
+    """
+    udata = get_user_fishing(uid)
+    rods = get_custom_rods()
+    rod_name = udata.get("rod", "Pancing Bambu")
+    # Pastikan rod yang dimiliki ada di daftar rod saat ini
+    if rod_name not in rods:
+        rod_name = list(rods.keys())[0]
+    rod_data = rods.get(rod_name, {"catch_bonus": 1.0, "emoji": "🎣"})
+
+    bait_list = udata.get("bait", {})
+    bait_bonus = 1.0
+    used_bait = None
+    for bname, qty in list(bait_list.items()):
+        if qty > 0 and bname in BAITS:
+            bait_bonus = BAITS[bname]["bonus"]
+            bait_list[bname] -= 1
+            if bait_list[bname] <= 0:
+                del bait_list[bname]
+            used_bait = bname
+            break
+    udata["bait"] = bait_list
+
+    # Ambil daftar ikan (custom atau default)
+    fish_pool = get_custom_fishes()
+
+    # Hitung bobot berdasarkan luck_chance dan rod bonus
+    weights = []
+    for f in fish_pool:
+        base_weight = f.get("luck_chance", 10)
+        rarity = f.get("rarity", "common")
+        # Trash tidak terpengaruh rod bonus
+        if rarity == "trash":
+            weights.append(base_weight)
+        else:
+            weights.append(max(1, int(base_weight * rod_data.get("catch_bonus", 1.0) * bait_bonus)))
+
+    caught = random.choices(fish_pool, weights=weights, k=1)[0]
+
+    # [CHANGED] Tidak lagi tambah coin otomatis - coin didapat dari jual
+    udata["total_catch"] += 1
+    udata["inventory"].append(caught["name"])
+    save_user_fishing(uid, udata)
+
+    return caught, rod_data, rod_name, used_bait
 
 class FishingMainView(discord.ui.View):
     def __init__(self, user_id):
@@ -539,40 +776,30 @@ class FishingMainView(discord.ui.View):
             await interaction.response.send_message(f"⏳ Sabar bro! **{sisa} detik** lagi. Emang mancing bisa buru-buru? wkwk", ephemeral=True)
             return
         fishing_cooldowns[uid] = now
+
+        caught, rod_data, rod_name, used_bait = do_fishing_catch(uid)
         udata = get_user_fishing(uid)
-        rod = RODS.get(udata["rod"], RODS["Pancing Bambu"])
-        bait_list = udata.get("bait", {})
-        bait_bonus = 1.0
-        used_bait = None
-        for bname, qty in list(bait_list.items()):
-            if qty > 0 and bname in BAITS:
-                bait_bonus = BAITS[bname]["bonus"]
-                bait_list[bname] -= 1
-                if bait_list[bname] <= 0:
-                    del bait_list[bname]
-                used_bait = bname
-                break
-        udata["bait"] = bait_list
-        weights = []
-        fish_pool = FISHES.copy()
-        for f in fish_pool:
-            w = {"legendary": 2, "rare": 10, "uncommon": 25, "common": 50, "trash": 13}[f["rarity"]]
-            weights.append(int(w * rod["catch_bonus"] * bait_bonus) if f["rarity"] != "trash" else w)
-        caught = random.choices(fish_pool, weights=weights, k=1)[0]
-        coins_earned = int(caught["value"] * rod["catch_bonus"] * bait_bonus)
-        udata["coins"] += coins_earned
-        udata["total_catch"] += 1
-        udata["inventory"].append(caught["name"])
-        save_user_fishing(uid, udata)
-        rarity_colors = {"legendary": "⭐⭐⭐", "rare": "⭐⭐", "uncommon": "⭐", "common": "", "trash": "💩"}
-        em = dark_red_embed(
-            f"{caught['emoji']} Hasil Mancing!",
-            f"**{interaction.user.display_name}** dapet **{caught['name']}** {rarity_colors[caught['rarity']]}\n"
-            f"🪙 +{coins_earned} koin (Total: {udata['coins']})\n"
-            f"🎣 Rod: {rod['emoji']} {udata['rod']}\n"
-            + (f"🪱 Umpan: {used_bait}" if used_bait else "⚠️ Gak pake umpan!")
+
+        em, is_rare = build_fishing_result_embed(
+            interaction.user.display_name, caught, rod_data, rod_name, used_bait, udata["coins"]
         )
+
         await interaction.response.edit_message(embed=em, view=self)
+
+        # [NEW] Kirim notifikasi spesial di channel jika ikan rare/legendary
+        if is_rare:
+            notif_em = discord.Embed(
+                title=f"🎊 TANGKAPAN LUAR BIASA!",
+                description=(
+                    f"**{interaction.user.mention}** baru saja mendapat ikan **{caught.get('rarity', '').upper()}**!\n\n"
+                    f"{caught.get('emoji', '🐟')} **{caught['name']}** {'⭐⭐⭐' if caught.get('rarity') == 'legendary' else '⭐⭐'}\n"
+                    f"💰 Nilai: **{caught['sell_price']} koin**\n\n"
+                    f"GG bro! Langka banget tangkapannya! 🏆"
+                ),
+                color=0xFFD700 if caught.get("rarity") == "legendary" else 0x9B59B6
+            )
+            notif_em.set_thumbnail(url=interaction.user.display_avatar.url)
+            await interaction.channel.send(embed=notif_em)
 
     @discord.ui.button(label="🎒 Inventori", style=discord.ButtonStyle.secondary, row=0)
     async def inventory(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -584,37 +811,119 @@ class FishingMainView(discord.ui.View):
         inv_count = {}
         for item in inv:
             inv_count[item] = inv_count.get(item, 0) + 1
-        inv_text = "\n".join([f"• {k}: x{v}" for k, v in inv_count.items()]) if inv_count else "Inventori kosong bro, ayo mancing dulu!"
+
+        # Tampilkan harga jual per ikan
+        fish_pool = get_custom_fishes()
+        fish_prices = {f["name"]: f.get("sell_price", 0) for f in fish_pool}
+
+        if inv_count:
+            inv_lines = []
+            for name, qty in inv_count.items():
+                price = fish_prices.get(name, 0)
+                inv_lines.append(f"• **{name}** x{qty} (💰 {price} koin/ekor)")
+            inv_text = "\n".join(inv_lines)
+        else:
+            inv_text = "Inventori kosong bro, ayo mancing dulu!"
+
         em = dark_red_embed(
             f"🎒 Inventori {interaction.user.display_name}",
-            f"**Koin:** {udata['coins']} 🪙\n**Rod:** {udata['rod']}\n**Total Tangkapan:** {udata['total_catch']}\n\n**Ikan:**\n{inv_text}"
+            f"**Koin:** {udata['coins']} 🪙\n**Rod:** {udata.get('rod', 'Pancing Bambu')}\n"
+            f"**Total Tangkapan:** {udata['total_catch']}\n\n**Ikan di Inventori:**\n{inv_text}"
         )
         em.add_field(name="🪱 Umpan", value="\n".join([f"{k}: x{v}" for k, v in udata.get('bait', {}).items()]) or "Habis!", inline=True)
+        em.set_footer(text="Jual ikan kamu via tombol 💰 Jual Ikan!")
         await interaction.response.send_message(embed=em, ephemeral=True)
 
-    @discord.ui.button(label="🏪 Shop", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="💰 Jual Ikan", style=discord.ButtonStyle.success, row=0)
+    async def sell_fish(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """[NEW] Jual semua ikan di inventori untuk mendapat koin."""
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Ini bukan inventori lo bro!", ephemeral=True)
+            return
+        uid = str(interaction.user.id)
+        udata = get_user_fishing(uid)
+        inv = udata.get("inventory", [])
+        if not inv:
+            await interaction.response.send_message("🎒 Inventori lo kosong! Mancing dulu bro.", ephemeral=True)
+            return
+
+        # Hitung total harga dari semua ikan
+        fish_pool = get_custom_fishes()
+        fish_prices = {f["name"]: f.get("sell_price", 0) for f in fish_pool}
+
+        total_earned = 0
+        sell_summary = {}
+        for fish_name in inv:
+            price = fish_prices.get(fish_name, 0)
+            total_earned += price
+            sell_summary[fish_name] = sell_summary.get(fish_name, 0) + 1
+
+        udata["coins"] += total_earned
+        udata["inventory"] = []  # Kosongin inventori setelah jual
+        save_user_fishing(uid, udata)
+
+        summary_lines = [f"• {name} x{qty} → +{fish_prices.get(name, 0) * qty} koin" for name, qty in sell_summary.items()]
+        em = dark_red_embed(
+            "💰 Ikan Terjual!",
+            f"**{interaction.user.display_name}** berhasil jual semua ikan!\n\n"
+            + "\n".join(summary_lines) +
+            f"\n\n**Total dapet:** {total_earned} 🪙\n**Koin sekarang:** {udata['coins']} 🪙"
+        )
+        await interaction.response.send_message(embed=em, ephemeral=False)
+
+    @discord.ui.button(label="🏪 Shop", style=discord.ButtonStyle.primary, row=1)
     async def shop(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("❌ Buka shop sendiri bro!", ephemeral=True)
             return
         udata = get_user_fishing(str(interaction.user.id))
-        rod_text = "\n".join([f"{v['emoji']} **{k}** - {v['price']} 🪙 (Tier {v['tier']})" for k, v in RODS.items()])
+        rods = get_custom_rods()
+        rod_text = "\n".join([f"{v.get('emoji', '🎣')} **{k}** - {v['price']} 🪙 (Bonus: x{v.get('catch_bonus', 1.0)})" for k, v in rods.items()])
         bait_text = "\n".join([f"{v['emoji']} **{k}** - {v['price']} 🪙" for k, v in BAITS.items()])
         reward_text = "\n".join([f"🎁 **{k}** - {v['price']} 🪙" for k, v in SHOP_REWARDS.items()])
         em = dark_red_embed(
             "🏪 Fishing Shop",
             f"**Koin lo:** {udata['coins']} 🪙\n\n**🎣 Rod:**\n{rod_text}\n\n**🪱 Umpan:**\n{bait_text}\n\n**🎁 Reward Spesial:**\n{reward_text}"
         )
+        em.set_footer(text="Koin didapat dengan menjual ikan!")
         await interaction.response.send_message(embed=em, view=ShopBuyView(interaction.user.id), ephemeral=True)
+
+class FishingView(discord.ui.View):
+    """Legacy view - tetap ada untuk backward compat."""
+    def __init__(self, user_id):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+
+    @discord.ui.button(label="🎣 Mancing", style=discord.ButtonStyle.danger)
+    async def fish(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Ini bukan mancing lo bro, jangan gangguin!", ephemeral=True)
+            return
+        now = time.time()
+        uid = str(interaction.user.id)
+        if uid in fishing_cooldowns and now - fishing_cooldowns[uid] < 10:
+            sisa = round(10 - (now - fishing_cooldowns[uid]))
+            await interaction.response.send_message(f"⏳ Santai bro! Tungguin dulu **{sisa} detik** lagi.", ephemeral=True)
+            return
+        fishing_cooldowns[uid] = now
+
+        caught, rod_data, rod_name, used_bait = do_fishing_catch(uid)
+        udata = get_user_fishing(uid)
+
+        em, _ = build_fishing_result_embed(
+            interaction.user.display_name, caught, rod_data, rod_name, used_bait, udata["coins"]
+        )
+        await interaction.response.edit_message(embed=em, view=FishingMainView(interaction.user.id))
 
 class ShopBuyView(discord.ui.View):
     def __init__(self, user_id):
         super().__init__(timeout=120)
         self.user_id = user_id
+        rods = get_custom_rods()
         rod_select = discord.ui.Select(
             placeholder="Beli Rod...",
             custom_id="buy_rod",
-            options=[discord.SelectOption(label=k, description=f"Tier {v['tier']} - {v['price']} koin", emoji=v["emoji"]) for k, v in RODS.items()]
+            options=[discord.SelectOption(label=k, description=f"Bonus x{v.get('catch_bonus', 1.0)} - {v['price']} koin", emoji=v.get("emoji", "🎣")) for k, v in list(rods.items())[:25]]
         )
         rod_select.callback = self.buy_rod
         self.add_item(rod_select)
@@ -632,7 +941,11 @@ class ShopBuyView(discord.ui.View):
             return
         item = interaction.data["values"][0]
         udata = get_user_fishing(str(interaction.user.id))
-        price = RODS[item]["price"]
+        rods = get_custom_rods()
+        if item not in rods:
+            await interaction.response.send_message("❌ Rod tidak ditemukan!", ephemeral=True)
+            return
+        price = rods[item]["price"]
         if udata["coins"] < price:
             await interaction.response.send_message(f"❌ Koin lo kurang bro! Butuh {price} 🪙, lo cuma punya {udata['coins']} 🪙", ephemeral=True)
             return
@@ -657,6 +970,336 @@ class ShopBuyView(discord.ui.View):
         udata["bait"][item] = udata["bait"].get(item, 0) + 5
         save_user_fishing(str(interaction.user.id), udata)
         await interaction.response.send_message(f"✅ Beli **{item}** x5! Sisa koin: {udata['coins']} 🪙", ephemeral=True)
+
+# ===================== [NEW] FISHING SETUP VIEW (Admin Only) =====================
+
+class FishingSetupView(discord.ui.View):
+    """View panel konfigurasi fishing untuk admin. Diakses via !Kingdoom setfishing"""
+
+    def __init__(self):
+        super().__init__(timeout=300)
+
+    @discord.ui.button(label="🐟 Tambah Ikan Custom", style=discord.ButtonStyle.primary, row=0)
+    async def add_fish(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "🐟 **Tambah Ikan Custom**\n\n"
+            "Ketik data ikan dengan format:\n"
+            "`nama|sell_price|rarity|luck_chance|emoji`\n\n"
+            "**Keterangan:**\n"
+            "• `nama` — Nama ikan\n"
+            "• `sell_price` — Harga jual (koin)\n"
+            "• `rarity` — `common`, `uncommon`, `rare`, `legendary`, `trash`\n"
+            "• `luck_chance` — Angka chance (lebih kecil = lebih langka, contoh: legendary = 1-2)\n"
+            "• `emoji` — Emoji ikan\n\n"
+            "**Contoh:** `Ikan Pelangi|300|rare|5|🌈`",
+            ephemeral=True
+        )
+        try:
+            msg = await bot.wait_for(
+                "message",
+                check=lambda m: m.author.id == interaction.user.id,
+                timeout=60
+            )
+            parts = [p.strip() for p in msg.content.split("|")]
+            if len(parts) < 5:
+                await interaction.followup.send("❌ Format salah! Harus ada 5 bagian dipisah `|`", ephemeral=True)
+                return
+            name, sell_price_str, rarity, luck_chance_str, emoji = parts[0], parts[1], parts[2], parts[3], parts[4]
+            sell_price = int(sell_price_str)
+            luck_chance = int(luck_chance_str)
+            if rarity not in ("common", "uncommon", "rare", "legendary", "trash"):
+                await interaction.followup.send("❌ Rarity tidak valid! Gunakan: common, uncommon, rare, legendary, trash", ephemeral=True)
+                return
+
+            fishes = get_custom_fishes()
+            # Jika masih pakai default, mulai dari list kosong agar admin bisa full custom
+            if fishes == DEFAULT_FISHES:
+                fishes = []
+            fishes.append({
+                "name": name,
+                "sell_price": sell_price,
+                "rarity": rarity,
+                "luck_chance": luck_chance,
+                "emoji": emoji
+            })
+            save_custom_fishes(fishes)
+            em = dark_red_embed(
+                "✅ Ikan Berhasil Ditambah!",
+                f"{emoji} **{name}**\n"
+                f"💰 Harga jual: {sell_price} koin\n"
+                f"⭐ Rarity: {rarity}\n"
+                f"🎲 Luck chance: {luck_chance}\n\n"
+                f"Total ikan custom: **{len(fishes)}**"
+            )
+            await interaction.followup.send(embed=em, ephemeral=True)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
+        except (ValueError, IndexError):
+            await interaction.followup.send("❌ Format angka salah! Pastikan sell_price dan luck_chance berupa angka.", ephemeral=True)
+
+    @discord.ui.button(label="🗑️ Hapus Ikan Custom", style=discord.ButtonStyle.danger, row=0)
+    async def remove_fish(self, interaction: discord.Interaction, button: discord.ui.Button):
+        fishes = get_custom_fishes()
+        if fishes == DEFAULT_FISHES or not fishes:
+            await interaction.response.send_message("❌ Belum ada ikan custom yang bisa dihapus!", ephemeral=True)
+            return
+        fish_list = "\n".join([f"{i+1}. {f.get('emoji', '🐟')} **{f['name']}** ({f.get('rarity', 'common')})" for i, f in enumerate(fishes)])
+        await interaction.response.send_message(
+            f"🗑️ **Daftar Ikan Custom:**\n{fish_list}\n\nKetik **nomor** ikan yang mau dihapus:",
+            ephemeral=True
+        )
+        try:
+            msg = await bot.wait_for(
+                "message",
+                check=lambda m: m.author.id == interaction.user.id and m.content.strip().isdigit(),
+                timeout=30
+            )
+            nomor = int(msg.content.strip())
+            if nomor < 1 or nomor > len(fishes):
+                await interaction.followup.send("❌ Nomor tidak valid!", ephemeral=True)
+                return
+            removed = fishes.pop(nomor - 1)
+            save_custom_fishes(fishes)
+            await interaction.followup.send(
+                embed=dark_red_embed("🗑️ Ikan Dihapus!", f"{removed.get('emoji', '🐟')} **{removed['name']}** berhasil dihapus dari daftar ikan!"),
+                ephemeral=True
+            )
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
+
+    @discord.ui.button(label="📋 List Ikan", style=discord.ButtonStyle.secondary, row=0)
+    async def list_fish(self, interaction: discord.Interaction, button: discord.ui.Button):
+        fishes = get_custom_fishes()
+        is_default = (fishes == DEFAULT_FISHES)
+        rarity_order = ["legendary", "rare", "uncommon", "common", "trash"]
+        rarity_label = {"legendary": "⭐ Legendary", "rare": "💎 Rare", "uncommon": "🔵 Uncommon", "common": "⚪ Common", "trash": "💩 Trash"}
+        lines = []
+        for r in rarity_order:
+            group = [f for f in fishes if f.get("rarity") == r]
+            if group:
+                lines.append(f"\n**{rarity_label.get(r, r)}**")
+                for f in group:
+                    lines.append(f"  {f.get('emoji', '🐟')} {f['name']} — Jual: {f.get('sell_price', 0)} koin | Chance: {f.get('luck_chance', 10)}")
+        em = dark_red_embed(
+            f"🐟 Daftar Ikan {'(Default)' if is_default else '(Custom)'}",
+            "\n".join(lines) if lines else "Kosong!"
+        )
+        em.set_footer(text=f"Total: {len(fishes)} ikan | {'Gunakan ikan default karena belum ada custom' if is_default else 'Menggunakan ikan custom'}")
+        await interaction.response.send_message(embed=em, ephemeral=True)
+
+    @discord.ui.button(label="🎣 Set Rod Custom", style=discord.ButtonStyle.primary, row=1)
+    async def set_rod(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "🎣 **Tambah/Edit Rod Custom**\n\n"
+            "Ketik data rod dengan format:\n"
+            "`nama|price|catch_bonus|emoji`\n\n"
+            "**Keterangan:**\n"
+            "• `nama` — Nama rod\n"
+            "• `price` — Harga beli (koin)\n"
+            "• `catch_bonus` — Multiplier bonus (contoh: 1.5 = +50%)\n"
+            "• `emoji` — Emoji rod\n\n"
+            "**Contoh:** `Pancing Kristal|3000|4.0|💎`",
+            ephemeral=True
+        )
+        try:
+            msg = await bot.wait_for(
+                "message",
+                check=lambda m: m.author.id == interaction.user.id,
+                timeout=60
+            )
+            parts = [p.strip() for p in msg.content.split("|")]
+            if len(parts) < 4:
+                await interaction.followup.send("❌ Format salah! Harus ada 4 bagian dipisah `|`", ephemeral=True)
+                return
+            name, price_str, bonus_str, emoji = parts[0], parts[1], parts[2], parts[3]
+            price = int(price_str)
+            bonus = float(bonus_str)
+
+            rods = get_custom_rods()
+            if rods == RODS:
+                rods = RODS.copy()  # Salin dari default sebelum modifikasi
+            tier = len(rods) + 1
+            rods[name] = {"tier": tier, "price": price, "catch_bonus": bonus, "emoji": emoji}
+            save_custom_rods(rods)
+            em = dark_red_embed(
+                "✅ Rod Berhasil Ditambah/Diupdate!",
+                f"{emoji} **{name}**\n"
+                f"💰 Harga: {price} koin\n"
+                f"📈 Catch bonus: x{bonus}\n\n"
+                f"Total rod: **{len(rods)}**"
+            )
+            await interaction.followup.send(embed=em, ephemeral=True)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
+        except (ValueError, IndexError):
+            await interaction.followup.send("❌ Format angka salah! Pastikan price dan catch_bonus berupa angka.", ephemeral=True)
+
+    @discord.ui.button(label="🔄 Reset ke Default", style=discord.ButtonStyle.danger, row=1)
+    async def reset_to_default(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "⚠️ **Konfirmasi Reset**\n\nIni akan menghapus semua ikan dan rod custom dan kembali ke default.\nKetik `RESET` untuk konfirmasi:",
+            ephemeral=True
+        )
+        try:
+            msg = await bot.wait_for(
+                "message",
+                check=lambda m: m.author.id == interaction.user.id,
+                timeout=30
+            )
+            if msg.content.strip().upper() == "RESET":
+                save_custom_fishes([])   # Kosongkan = gunakan default
+                save_custom_rods({})     # Kosongkan = gunakan default
+                await interaction.followup.send("✅ Data fishing berhasil direset ke default!", ephemeral=True)
+            else:
+                await interaction.followup.send("❌ Reset dibatalkan (harus ketik RESET).", ephemeral=True)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout! Reset dibatalkan.", ephemeral=True)
+
+async def fishing_setup_panel(ctx):
+    """Tampilkan panel setup fishing untuk admin."""
+    fishes = get_custom_fishes()
+    rods = get_custom_rods()
+    is_custom_fish = fishes != DEFAULT_FISHES
+    is_custom_rod = rods != RODS
+
+    em = dark_red_embed(
+        "🎣 Setup Fishing System",
+        "**Panel konfigurasi sistem fishing bot.**\n\n"
+        f"**🐟 Ikan:** {'Custom (' + str(len(fishes)) + ' ikan)' if is_custom_fish else 'Default (' + str(len(fishes)) + ' ikan)'}\n"
+        f"**🎣 Rod:** {'Custom (' + str(len(rods)) + ' rod)' if is_custom_rod else 'Default (' + str(len(rods)) + ' rod)'}\n\n"
+        "Gunakan tombol di bawah untuk mengatur sistem fishing.\n\n"
+        "**⚠️ Catatan:** Coin tidak lagi diberikan otomatis saat mancing.\n"
+        "User harus menjual ikan untuk mendapatkan koin."
+    )
+    em.set_footer(text="⚠️ Panel ini hanya untuk Owner/Admin")
+    await ctx.send(embed=em, view=FishingSetupView())
+    try:
+        await ctx.message.delete()
+    except:
+        pass
+
+# ===================== [NEW] MAINTENANCE VIEW =====================
+
+class MaintenanceView(discord.ui.View):
+    """View panel maintenance mode untuk admin. Diakses via !Kingdoom maintenance"""
+
+    def __init__(self, guild_id: str):
+        super().__init__(timeout=300)
+        self.guild_id = guild_id
+
+    @discord.ui.button(label="⚡ Toggle ON/OFF", style=discord.ButtonStyle.danger, row=0)
+    async def toggle_maintenance(self, interaction: discord.Interaction, button: discord.ui.Button):
+        mdata = get_maintenance_data()
+        gid = self.guild_id
+        if gid not in mdata:
+            mdata[gid] = {}
+        current = mdata[gid].get("enabled", False)
+        mdata[gid]["enabled"] = not current
+        save_maintenance_data(mdata)
+        new_status = mdata[gid]["enabled"]
+        status_text = "🔴 AKTIF" if new_status else "🟢 NONAKTIF"
+        em = dark_red_embed(
+            "⚡ Status Maintenance Diubah",
+            f"Mode maintenance sekarang: **{status_text}**\n\n"
+            + ("Bot hanya akan merespon di main channel maintenance." if new_status else "Bot kembali bekerja normal di semua channel.")
+        )
+        await interaction.response.send_message(embed=em, ephemeral=True)
+
+    @discord.ui.button(label="📢 Set Pesan Maintenance", style=discord.ButtonStyle.secondary, row=0)
+    async def set_message(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "📢 **Set Pesan Maintenance**\n\nKetik pesan yang akan ditampilkan saat user mencoba pakai bot di luar main channel:",
+            ephemeral=True
+        )
+        try:
+            msg = await bot.wait_for(
+                "message",
+                check=lambda m: m.author.id == interaction.user.id,
+                timeout=60
+            )
+            mdata = get_maintenance_data()
+            gid = self.guild_id
+            if gid not in mdata:
+                mdata[gid] = {}
+            mdata[gid]["message"] = msg.content.strip()
+            save_maintenance_data(mdata)
+            await interaction.followup.send(
+                embed=dark_red_embed("✅ Pesan Maintenance Diset!", f"**Pesan:**\n```{msg.content.strip()}```"),
+                ephemeral=True
+            )
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
+
+    @discord.ui.button(label="📌 Set Main Channel", style=discord.ButtonStyle.secondary, row=0)
+    async def set_main_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "📌 **Set Main Channel Maintenance**\n\nMention channel yang akan jadi satu-satunya tempat bot aktif saat maintenance:",
+            ephemeral=True
+        )
+        try:
+            msg = await bot.wait_for(
+                "message",
+                check=lambda m: m.author.id == interaction.user.id and m.channel_mentions,
+                timeout=30
+            )
+            ch = msg.channel_mentions[0]
+            mdata = get_maintenance_data()
+            gid = self.guild_id
+            if gid not in mdata:
+                mdata[gid] = {}
+            mdata[gid]["main_channel"] = str(ch.id)
+            save_maintenance_data(mdata)
+            await interaction.followup.send(
+                embed=dark_red_embed("✅ Main Channel Diset!", f"Saat maintenance, bot hanya aktif di {ch.mention}."),
+                ephemeral=True
+            )
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
+
+    @discord.ui.button(label="📋 Status Maintenance", style=discord.ButtonStyle.success, row=1)
+    async def view_status(self, interaction: discord.Interaction, button: discord.ui.Button):
+        mdata = get_maintenance_data()
+        gid = self.guild_id
+        guild_maint = mdata.get(gid, {})
+        enabled = guild_maint.get("enabled", False)
+        main_ch_id = guild_maint.get("main_channel")
+        maint_msg = guild_maint.get("message", "Bot sedang maintenance, harap tunggu!")
+        ch_text = f"<#{main_ch_id}>" if main_ch_id else "❌ Belum diset"
+        em = dark_red_embed(
+            "📋 Status Maintenance",
+            f"**Status:** {'🔴 AKTIF (Maintenance ON)' if enabled else '🟢 NONAKTIF (Normal)'}\n"
+            f"**Main Channel:** {ch_text}\n\n"
+            f"**Pesan Maintenance:**\n```{maint_msg}```"
+        )
+        await interaction.response.send_message(embed=em, ephemeral=True)
+
+async def maintenance_panel(ctx):
+    """Tampilkan panel maintenance untuk admin."""
+    gid = str(ctx.guild.id)
+    mdata = get_maintenance_data()
+    guild_maint = mdata.get(gid, {})
+    enabled = guild_maint.get("enabled", False)
+    main_ch_id = guild_maint.get("main_channel")
+    ch_text = f"<#{main_ch_id}>" if main_ch_id else "❌ Belum diset"
+
+    em = dark_red_embed(
+        "🔧 Panel Maintenance Mode",
+        "**Kontrol mode maintenance bot di server ini.**\n\n"
+        f"**Status:** {'🔴 AKTIF' if enabled else '🟢 NONAKTIF'}\n"
+        f"**Main Channel:** {ch_text}\n\n"
+        "**Cara kerja:**\n"
+        "• Saat **ON**: Bot hanya respon di main channel\n"
+        "• Channel lain: Tampilkan pesan maintenance\n"
+        "• Saat **OFF**: Bot bekerja normal di semua channel"
+    )
+    em.set_footer(text="⚠️ Panel ini hanya untuk Owner/Admin")
+    await ctx.send(embed=em, view=MaintenanceView(gid))
+    try:
+        await ctx.message.delete()
+    except:
+        pass
+
+# ===================== REACTION ROLE VIEW =====================
 
 class ReactionRoleView(discord.ui.View):
     def __init__(self, roles_config):
@@ -757,7 +1400,7 @@ class PremiumOrderView(discord.ui.View):
 
     @discord.ui.button(label="✅ Approve", style=discord.ButtonStyle.success, custom_id="premium_approve")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Hanya owner yang bisa approve
+        # Hanya owner/admin yang bisa approve
         if interaction.user.id != OWNER_ID and not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("❌ Lo gak punya akses buat ini!", ephemeral=True)
             return
@@ -772,18 +1415,19 @@ class PremiumOrderView(discord.ui.View):
             await interaction.response.send_message(f"⚠️ Order ini sudah **{order['status']}**!", ephemeral=True)
             return
 
-        # Aktifkan premium
+        # Aktifkan premium per user
         pdata = get_premium_data()
         if "users" not in pdata:
             pdata["users"] = {}
-        
+
         duration_days = order.get("duration_days", 30)
         pdata["users"][str(self.user_id)] = {
             "active": True,
             "activated_at": time.time(),
             "expires_at": time.time() + (duration_days * 86400),
             "approved_by": str(interaction.user.id),
-            "package": order.get("package", "Premium")
+            "package": order.get("package", "Premium"),
+            "expired_notified": False
         }
         save_premium_data(pdata)
 
@@ -793,7 +1437,7 @@ class PremiumOrderView(discord.ui.View):
         orders[self.order_id]["approved_at"] = time.time()
         save_premium_orders(orders)
 
-        # DM user yang order
+        # [NEW] Notifikasi DM ke user yang order
         try:
             user = await bot.fetch_user(self.user_id)
             pdata_settings = get_premium_settings()
@@ -819,11 +1463,10 @@ class PremiumOrderView(discord.ui.View):
         em = interaction.message.embeds[0] if interaction.message.embeds else dark_red_embed("Order")
         em.color = 0x00FF00
         em.set_footer(text=f"✅ APPROVED oleh {interaction.user.display_name} | {datetime.datetime.now(tz=WIB).strftime('%d/%m/%Y %H:%M')}")
-        
-        # Disable semua button
+
         for child in self.children:
             child.disabled = True
-        
+
         await interaction.response.edit_message(embed=em, view=self)
         await interaction.followup.send(f"✅ Order **{self.order_id}** berhasil di-approve! User sudah di-DM.", ephemeral=True)
 
@@ -848,7 +1491,7 @@ class PremiumOrderView(discord.ui.View):
         orders[self.order_id]["rejected_at"] = time.time()
         save_premium_orders(orders)
 
-        # DM user
+        # [NEW] Notifikasi DM ke user yang direject
         try:
             user = await bot.fetch_user(self.user_id)
             dm_em = dark_red_embed(
@@ -864,10 +1507,10 @@ class PremiumOrderView(discord.ui.View):
         em = interaction.message.embeds[0] if interaction.message.embeds else dark_red_embed("Order")
         em.color = 0xFF0000
         em.set_footer(text=f"❌ REJECTED oleh {interaction.user.display_name} | {datetime.datetime.now(tz=WIB).strftime('%d/%m/%Y %H:%M')}")
-        
+
         for child in self.children:
             child.disabled = True
-        
+
         await interaction.response.edit_message(embed=em, view=self)
         await interaction.followup.send(f"✅ Order **{self.order_id}** berhasil di-reject. User sudah di-DM.", ephemeral=True)
 
@@ -878,14 +1521,9 @@ class PremiumOrderView(discord.ui.View):
             return
 
         await interaction.response.send_message(
-            "📝 Ketik pesan yang mau dikirim ke user (timeout 60 detik):\n"
-            "*(Pesan akan dikirim via DM bot ke user yang order)*",
+            "📝 Ketik pesan yang mau dikirim ke user (timeout 60 detik):",
             ephemeral=True
         )
-
-        def check(m):
-            return m.author.id == interaction.user.id and isinstance(m.channel, discord.DMChannel) or \
-                   (m.author.id == interaction.user.id and m.channel == interaction.channel)
 
         try:
             msg = await bot.wait_for(
@@ -898,7 +1536,7 @@ class PremiumOrderView(discord.ui.View):
             user = await bot.fetch_user(self.user_id)
             orders = get_premium_orders()
             order = orders.get(self.order_id, {})
-            
+
             dm_em = dark_red_embed(
                 "📩 Pesan dari Admin RepublikDooms",
                 f"**Halo {user.display_name}!**\n\n"
@@ -914,10 +1552,10 @@ class PremiumOrderView(discord.ui.View):
         except Exception as e:
             await interaction.followup.send(f"❌ Gagal kirim pesan: {str(e)[:100]}", ephemeral=True)
 
-# ===================== PREMIUM SETUP VIEW (Owner Only) =====================
+# ===================== [IMPROVED] PREMIUM SETUP VIEW (Owner Only) =====================
 
 class PremiumSetupView(discord.ui.View):
-    """View untuk setup premium - hanya bisa diakses owner via !Kingdoom premium"""
+    """View untuk setup premium - hanya bisa diakses owner/admin via !Kingdoom premium"""
     def __init__(self):
         super().__init__(timeout=300)
 
@@ -925,7 +1563,7 @@ class PremiumSetupView(discord.ui.View):
     async def set_webhook(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
             "🔗 Ketik **Webhook URL** channel tujuan notifikasi order premium:\n"
-            "*(Paste webhook URL-nya di sini)*",
+            "*(Paste webhook URL-nya di sini - akan divalidasi sebelum disimpan)*",
             ephemeral=True
         )
         try:
@@ -935,19 +1573,33 @@ class PremiumSetupView(discord.ui.View):
                 timeout=60
             )
             webhook_url = msg.content.strip()
-            if not webhook_url.startswith("https://discord.com/api/webhooks/"):
-                await interaction.followup.send("❌ URL tidak valid! Harus berupa Discord Webhook URL.", ephemeral=True)
+
+            # Hapus pesan yang berisi webhook URL untuk keamanan
+            try:
+                await msg.delete()
+            except:
+                pass
+
+            # [IMPROVED] Validasi webhook dengan test kirim
+            await interaction.followup.send("⏳ Memvalidasi webhook URL...", ephemeral=True)
+            is_valid, error_msg = await validate_webhook_url(webhook_url)
+
+            if not is_valid:
+                await interaction.followup.send(f"❌ **Webhook tidak valid!**\n{error_msg}", ephemeral=True)
                 return
+
+            # Simpan webhook setelah validasi berhasil
             pdata = get_premium_data()
             if "settings" not in pdata:
                 pdata["settings"] = {}
             pdata["settings"]["webhook_url"] = webhook_url
             save_premium_data(pdata)
-            try:
-                await msg.delete()
-            except:
-                pass
-            await interaction.followup.send("✅ Webhook URL berhasil disimpan! (Pesan webhook dihapus demi keamanan)", ephemeral=True)
+            await interaction.followup.send(
+                "✅ **Webhook URL valid dan berhasil disimpan!**\n"
+                "Test message sudah dikirim ke channel webhook.\n"
+                "*(Pesan URL webhook dihapus demi keamanan)*",
+                ephemeral=True
+            )
         except asyncio.TimeoutError:
             await interaction.followup.send("⏰ Timeout!", ephemeral=True)
 
@@ -956,7 +1608,7 @@ class PremiumSetupView(discord.ui.View):
         pdata = get_premium_data()
         current_features = pdata.get("settings", {}).get("features", [])
         current_text = ", ".join(current_features) if current_features else "Belum ada"
-        
+
         await interaction.response.send_message(
             f"⚙️ **Fitur Premium Saat Ini:** `{current_text}`\n\n"
             "Ketik daftar fitur yang bisa diakses user premium (pisah dengan koma):\n"
@@ -1024,9 +1676,9 @@ class PremiumSetupView(discord.ui.View):
         pdata = get_premium_data()
         settings = pdata.get("settings", {})
         features = settings.get("features", [])
-        webhook_url = settings.get("webhook_url", "Belum diset")
-        webhook_display = f"✅ Sudah diset (`...{webhook_url[-20:]}`)" if webhook_url != "Belum diset" else "❌ Belum diset"
-        
+        webhook_url = settings.get("webhook_url", "")
+        webhook_display = f"✅ Sudah diset & tervalidasi (`...{webhook_url[-20:]}`)" if webhook_url else "❌ Belum diset"
+
         em = dark_red_embed(
             "👑 Pengaturan Premium System",
             f"**🔗 Webhook:** {webhook_display}\n"
@@ -1044,7 +1696,7 @@ class PremiumSetupView(discord.ui.View):
         if not users:
             await interaction.response.send_message("📊 Belum ada user premium.", ephemeral=True)
             return
-        
+
         lines = []
         now = time.time()
         for uid, udata in users.items():
@@ -1053,7 +1705,7 @@ class PremiumSetupView(discord.ui.View):
                 name = user.display_name
             except:
                 name = f"User {uid}"
-            
+
             active = udata.get("active", False)
             expires = udata.get("expires_at", 0)
             if expires and now > expires:
@@ -1064,7 +1716,7 @@ class PremiumSetupView(discord.ui.View):
             else:
                 status = "❌ Nonaktif"
             lines.append(f"**{name}** (`{uid}`) - {status}")
-        
+
         em = dark_red_embed("📊 Daftar User Premium", "\n".join(lines[:20]))
         em.set_footer(text=f"Total: {len(users)} user premium")
         await interaction.response.send_message(embed=em, ephemeral=True)
@@ -1086,6 +1738,18 @@ class PremiumSetupView(discord.ui.View):
             if uid in pdata.get("users", {}):
                 pdata["users"][uid]["active"] = False
                 save_premium_data(pdata)
+                # [NEW] Kirim notif DM ke user yang dicabut premium-nya
+                try:
+                    user = await bot.fetch_user(int(uid))
+                    dm_em = dark_red_embed(
+                        "❌ Premium Dicabut",
+                        f"Halo **{user.display_name}**,\n\n"
+                        "Premium kamu telah **dicabut** oleh admin.\n"
+                        "Hubungi admin untuk informasi lebih lanjut."
+                    )
+                    await user.send(embed=dm_em)
+                except:
+                    pass
                 await interaction.followup.send(f"✅ Premium user `{uid}` berhasil dicabut!", ephemeral=True)
             else:
                 await interaction.followup.send(f"❌ User ID `{uid}` tidak ditemukan di data premium.", ephemeral=True)
@@ -1094,7 +1758,6 @@ class PremiumSetupView(discord.ui.View):
 
 # ===================== PREFIX COMMANDS =====================
 
-# --- Ping (prefix + slash) ---
 @bot.command(name="ping")
 async def ping_cmd(ctx):
     latency = round(bot.latency * 1000)
@@ -1109,7 +1772,8 @@ async def ping_cmd(ctx):
 async def fishing(ctx):
     em = dark_red_embed(
         "🎣 Fishing RepublikDooms",
-        f"Halo **{ctx.author.display_name}**! Pilih aksi lo:"
+        f"Halo **{ctx.author.display_name}**! Pilih aksi lo:\n\n"
+        "💡 **Info:** Coin tidak lagi otomatis dapet saat mancing.\nJual ikan via tombol **💰 Jual Ikan** untuk dapet koin!"
     )
     await ctx.reply(embed=em, view=FishingMainView(ctx.author.id))
 
@@ -1583,10 +2247,10 @@ async def premium_user_cmd(ctx):
     features = settings.get("features", [])
     webhook_url = settings.get("webhook_url", "")
 
-    # Cek status premium user
+    # Cek status premium user (per-user check)
     uid = str(ctx.author.id)
     user_premium = pdata.get("users", {}).get(uid, {})
-    
+
     if user_premium.get("active") and (not user_premium.get("expires_at") or time.time() < user_premium.get("expires_at", 0)):
         expires_at = user_premium.get("expires_at")
         exp_text = datetime.datetime.fromtimestamp(expires_at, tz=WIB).strftime('%d/%m/%Y %H:%M') if expires_at else "Permanen"
@@ -1601,6 +2265,7 @@ async def premium_user_cmd(ctx):
         await ctx.reply(embed=em)
         return
 
+    # Jika tidak premium, tampilkan info order
     em = dark_red_embed(
         "👑 RepublikDooms Premium",
         f"Upgrade akses lo ke **PREMIUM** dan dapetin fitur eksklusif!\n\n"
@@ -1637,11 +2302,10 @@ async def premium_user_cmd(ctx):
                 )
                 order_note = confirm_msg.content[:500]
 
-                # Buat order ID
-                import hashlib
+                # Buat order ID unik
                 order_id = hashlib.md5(f"{interaction.user.id}{time.time()}".encode()).hexdigest()[:8].upper()
-                
-                # Simpan order
+
+                # Simpan order ke JSON
                 orders = get_premium_orders()
                 orders[order_id] = {
                     "user_id": str(interaction.user.id),
@@ -1673,21 +2337,20 @@ async def premium_user_cmd(ctx):
                 order_em.set_thumbnail(url=interaction.user.display_avatar.url)
                 order_em.set_footer(text=f"Order ID: {order_id}")
 
-                # Kirim ke webhook
+                # Kirim ke webhook (sudah tervalidasi sebelumnya)
                 sent_to_webhook = False
                 if webhook_url:
-                    import aiohttp
                     try:
                         async with aiohttp.ClientSession() as session:
-                            webhook = discord.Webhook.from_url(webhook_url, session=session)
+                            wh = discord.Webhook.from_url(webhook_url, session=session)
                             view_for_webhook = PremiumOrderView(order_id, interaction.user.id, str(ctx.guild.id))
-                            await webhook.send(embed=order_em, view=view_for_webhook)
+                            await wh.send(embed=order_em, view=view_for_webhook)
                             sent_to_webhook = True
                     except Exception as e:
                         print(f"Webhook premium error: {e}")
 
+                # [NEW] Fallback: DM owner jika webhook gagal
                 if not sent_to_webhook:
-                    # Fallback: DM owner jika webhook gagal
                     if OWNER_ID:
                         try:
                             owner = await bot.fetch_user(OWNER_ID)
@@ -1713,16 +2376,13 @@ async def premium_user_cmd(ctx):
     await ctx.reply(embed=em, view=OrderPremiumView())
 
 # ===================== OWNER-ONLY PREMIUM SETUP (!Kingdoom premium) =====================
-# Cara akses: ketik "!Kingdoom premium" di Discord
-# Dengan prefix "!Kingdoom ", maka command name yang dibaca bot adalah "premium"
-# Command ini OVERRIDE command premium user saat dipanggil via prefix !Kingdoom
 
 async def premium_setup_panel(ctx):
     """Tampilkan panel setup premium untuk owner/admin."""
     pdata = get_premium_data()
     settings = pdata.get("settings", {})
     webhook_url = settings.get("webhook_url", "")
-    webhook_display = "✅ Sudah diset" if webhook_url else "❌ Belum diset"
+    webhook_display = "✅ Sudah diset & tervalidasi" if webhook_url else "❌ Belum diset"
     features = settings.get("features", [])
 
     em = dark_red_embed(
@@ -1732,7 +2392,9 @@ async def premium_setup_panel(ctx):
         f"**💰 Harga:** {settings.get('price', 'Belum diset')}\n"
         f"**⏳ Durasi Default:** {settings.get('duration_days', 30)} hari\n"
         f"**⚙️ Total Fitur:** {len(features)} fitur aktif\n\n"
-        f"Gunakan tombol di bawah untuk mengatur sistem premium."
+        f"Gunakan tombol di bawah untuk mengatur sistem premium.\n\n"
+        f"**⚠️ Catatan:** Webhook URL akan **divalidasi** sebelum disimpan!\n"
+        f"Pastikan webhook aktif dan bot punya izin kirim ke channel tersebut."
     )
     em.set_footer(text="⚠️ Panel ini hanya untuk Owner/Admin")
     await ctx.send(embed=em, view=PremiumSetupView())
@@ -1741,13 +2403,15 @@ async def premium_setup_panel(ctx):
     except:
         pass
 
+# ===================== HELP COMMAND =====================
+
 @bot.command(name="help", aliases=["h"])
 async def help_cmd(ctx):
     em = dark_red_embed(
         "📖 RepublikDooms - Help",
         "Bot gaul lengkap buat server lo!"
     )
-    em.add_field(name="🎣 Fishing", value="`fish` `coins`", inline=True)
+    em.add_field(name="🎣 Fishing", value="`fish` `coins`\n*Jual ikan via tombol untuk dapet koin!*", inline=True)
     em.add_field(
         name="🧠 Tebak-Tebakan",
         value="`tebak` `addtebak [soal|jawaban|reward]` `listtebak` `removetebak [no]`",
@@ -1764,6 +2428,11 @@ async def help_cmd(ctx):
     em.add_field(
         name="👑 Premium",
         value="`premium` — Lihat info & order premium akses",
+        inline=False
+    )
+    em.add_field(
+        name="🔧 Admin (!Kingdoom prefix)",
+        value="`!Kingdoom premium` — Setup sistem premium\n`!Kingdoom setfishing` — Konfigurasi sistem fishing\n`!Kingdoom maintenance` — Toggle maintenance mode",
         inline=False
     )
     em.add_field(
@@ -1787,7 +2456,11 @@ async def slash_ping(interaction: discord.Interaction):
 
 @tree.command(name="fish", description="Mulai mancing!")
 async def slash_fish(interaction: discord.Interaction):
-    em = dark_red_embed("🎣 Fishing RepublikDooms", f"Halo **{interaction.user.display_name}**! Pilih aksi lo:")
+    em = dark_red_embed(
+        "🎣 Fishing RepublikDooms",
+        f"Halo **{interaction.user.display_name}**! Pilih aksi lo:\n\n"
+        "💡 **Info:** Jual ikan via tombol untuk dapet koin!"
+    )
     await interaction.response.send_message(embed=em, view=FishingMainView(interaction.user.id))
 
 @tree.command(name="ticket", description="Setup panel ticket")
@@ -1986,7 +2659,7 @@ async def slash_removerole(interaction: discord.Interaction, member: discord.Mem
 async def slash_embed(interaction: discord.Interaction, judul: str, deskripsi: str, ke_main_channel: bool = False):
     em = dark_red_embed(judul, deskripsi)
     target_channel = interaction.channel
-    
+
     if ke_main_channel:
         config = get_config()
         gid = str(interaction.guild.id)
@@ -2134,7 +2807,7 @@ async def slash_addtebak(interaction: discord.Interaction, soal: str, jawaban: s
 async def slash_coins(interaction: discord.Interaction):
     udata = get_user_fishing(str(interaction.user.id))
     await interaction.response.send_message(
-        embed=dark_red_embed("🪙 Koin Lo", f"**{interaction.user.display_name}** punya **{udata['coins']} koin** 🪙"),
+        embed=dark_red_embed("🪙 Koin Lo", f"**{interaction.user.display_name}** punya **{udata['coins']} koin** 🪙\n\nDapatin koin dengan **mancing** lalu **jual ikan**!"),
         ephemeral=True
     )
 
@@ -2155,51 +2828,59 @@ async def slash_leaderboard(interaction: discord.Interaction):
         text += f"{medal} **{name}** - Level {data['level']} ({data['xp']} XP)\n"
     await interaction.response.send_message(embed=dark_red_embed("🏆 Leaderboard Level", text))
 
-@tree.command(name="setfishingreward", description="Edit nilai/harga reward ikan di fishing (Admin)")
+@tree.command(name="setfishingreward", description="Edit nilai/harga jual ikan di fishing (Admin)")
 @app_commands.describe(
-    nama_ikan="Nama ikan yang mau diedit (contoh: Ikan Lele)",
-    nilai_baru="Nilai koin baru untuk ikan tersebut"
+    nama_ikan="Nama ikan yang mau diedit",
+    nilai_baru="Harga jual baru untuk ikan tersebut (koin)"
 )
 @app_commands.default_permissions(administrator=True)
 async def slash_setfishingreward(interaction: discord.Interaction, nama_ikan: str, nilai_baru: int):
+    fishes = get_custom_fishes()
     matched = None
-    for f in FISHES:
+    for f in fishes:
         if f["name"].lower() == nama_ikan.lower():
             matched = f
             break
     if not matched:
-        daftar = ", ".join([f["name"] for f in FISHES])
+        daftar = ", ".join([f["name"] for f in fishes])
         await interaction.response.send_message(
             f"❌ Ikan **{nama_ikan}** gak ketemu!\nDaftar ikan: {daftar}",
             ephemeral=True
         )
         return
-    old_val = matched["value"]
-    matched["value"] = nilai_baru
+    old_val = matched.get("sell_price", 0)
+    matched["sell_price"] = nilai_baru
+    # Jika masih pakai default, simpan ke custom
+    if fishes == DEFAULT_FISHES:
+        fishes = DEFAULT_FISHES.copy()
+    save_custom_fishes(fishes)
     em = dark_red_embed(
-        "✅ Reward Ikan Diupdate!",
-        f"{matched['emoji']} **{matched['name']}**\n"
-        f"Nilai lama: **{old_val} koin**\n"
-        f"Nilai baru: **{nilai_baru} koin**\n"
-        f"Rarity: **{matched['rarity']}**"
+        "✅ Harga Jual Ikan Diupdate!",
+        f"{matched.get('emoji', '🐟')} **{matched['name']}**\n"
+        f"Harga jual lama: **{old_val} koin**\n"
+        f"Harga jual baru: **{nilai_baru} koin**\n"
+        f"Rarity: **{matched.get('rarity', 'common')}**"
     )
     await interaction.response.send_message(embed=em)
 
-@tree.command(name="listfishingreward", description="Lihat semua reward ikan fishing saat ini")
+@tree.command(name="listfishingreward", description="Lihat semua ikan fishing saat ini")
 async def slash_listfishingreward(interaction: discord.Interaction):
+    fishes = get_custom_fishes()
     rarity_order = ["legendary", "rare", "uncommon", "common", "trash"]
     rarity_label = {"legendary": "⭐ Legendary", "rare": "💎 Rare", "uncommon": "🔵 Uncommon", "common": "⚪ Common", "trash": "💩 Trash"}
     lines = []
     for r in rarity_order:
-        group = [f for f in FISHES if f["rarity"] == r]
+        group = [f for f in fishes if f.get("rarity") == r]
         if group:
-            lines.append(f"**{rarity_label[r]}**")
+            lines.append(f"**{rarity_label.get(r, r)}**")
             for f in group:
-                lines.append(f"  {f['emoji']} {f['name']} → **{f['value']} koin**")
-    em = dark_red_embed("🐟 Daftar Reward Fishing", "\n".join(lines))
+                lines.append(f"  {f.get('emoji', '🐟')} {f['name']} → Jual: **{f.get('sell_price', 0)} koin** | Chance: {f.get('luck_chance', 10)}")
+    em = dark_red_embed("🐟 Daftar Ikan Fishing", "\n".join(lines))
+    em.set_footer(text="Koin didapat dengan menjual ikan!")
     await interaction.response.send_message(embed=em, ephemeral=True)
 
 # ===================== ERROR HANDLERS =====================
+
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
