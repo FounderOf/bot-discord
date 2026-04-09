@@ -309,10 +309,11 @@ def set_locked_commands(cmds: list):
 
 def premium_block_embed() -> discord.Embed:
     """Embed notifikasi command terkunci premium."""
-    pdata = get_premium_data()
-    pkgs  = get_premium_packages()
+    pdata        = get_premium_data()
+    pkgs         = get_premium_packages()
     pkg_text     = "\n".join([f"• **{k}** — {v['price']} | {v['duration_days']} hari" for k, v in pkgs.items()])
     payment_info = pdata.get("settings", {}).get("payment_info", "Ketik `!Doom premium` untuk info lebih lanjut.")
+    qris_url     = pdata.get("settings", {}).get("qris_url", "")
     em = discord.Embed(
         title="👑 Command Ini Khusus Premium!",
         description=(
@@ -324,6 +325,8 @@ def premium_block_embed() -> discord.Embed:
         ),
         color=0xFFD700
     )
+    if qris_url:
+        em.set_image(url=qris_url)
     em.set_footer(text="RepublikDooms Premium System")
     return em
 
@@ -1343,6 +1346,36 @@ class PremiumSetupView(discord.ui.View):
         except asyncio.TimeoutError:
             await interaction.followup.send("⏰ Timeout!", ephemeral=True)
 
+    @discord.ui.button(label="🖼️ Set QRIS Image", style=discord.ButtonStyle.primary, row=2)
+    async def set_qris(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != OWNER_ID:
+            await interaction.response.send_message("❌ Hanya Owner Bot yang bisa mengatur ini!", ephemeral=True)
+            return
+        pdata   = get_premium_data()
+        current = pdata.get("settings", {}).get("qris_url", "")
+        await interaction.response.send_message(
+            f"🖼️ **QRIS URL Saat Ini:** `{current if current else 'Belum diset'}`\n\n"
+            "Ketik URL gambar QRIS lo (harus link langsung ke gambar `.png/.jpg`):\n"
+            "Karena file `qris.png` ada di GitHub, format URL-nya:\n"
+            "`https://raw.githubusercontent.com/USERNAME/REPO/main/qris.png`\n\n"
+            "*(60 detik)*",
+            ephemeral=True
+        )
+        try:
+            msg = await bot.wait_for("message", check=lambda m: m.author.id == interaction.user.id, timeout=60)
+            qris_url = msg.content.strip()
+            if not (qris_url.startswith("http") and any(qris_url.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".gif", ".webp"])):
+                await interaction.followup.send("❌ URL tidak valid! Harus link langsung ke file gambar (.png/.jpg/.jpeg/.gif/.webp)", ephemeral=True)
+                return
+            pdata.setdefault("settings", {})["qris_url"] = qris_url
+            save_premium_data(pdata)
+            # Preview
+            preview_em = discord.Embed(title="✅ QRIS Berhasil Disimpan!", description=f"URL: `{qris_url}`\n\n*Preview QRIS di bawah:*", color=0x00FF00)
+            preview_em.set_image(url=qris_url)
+            await interaction.followup.send(embed=preview_em, ephemeral=True)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
+
 async def premium_setup_panel(ctx):
     pdata    = get_premium_data()
     settings = pdata.get("settings", {})
@@ -1351,6 +1384,7 @@ async def premium_setup_panel(ctx):
     locked   = get_locked_commands()
     payment  = settings.get("payment_info", "")
     locked_txt = (", ".join([f"`{c}`" for c in locked])) if locked else "*(belum ada)*"
+    qris_url_p = settings.get("qris_url", "")
     em = discord.Embed(
         title="⚙️ Setup Premium System",
         description=(
@@ -1358,11 +1392,14 @@ async def premium_setup_panel(ctx):
             f"**📦 Paket tersedia:** {len(pkgs)} paket\n"
             f"**👥 User premium:** {len(pdata.get('users', {}))} user\n"
             f"**🔒 Command dikunci:** {len(locked)} ({locked_txt})\n"
-            f"**💳 Info Pembayaran:** {'✅ Sudah diset' if payment else '❌ Belum diset'}\n\n"
+            f"**💳 Info Pembayaran:** {'✅ Sudah diset' if payment else '❌ Belum diset'}\n"
+            f"**🖼️ QRIS Image:** {'✅ Sudah diset' if qris_url_p else '❌ Belum diset'}\n\n"
             "Gunakan tombol di bawah untuk mengatur sistem premium."
         ),
         color=0xFFD700
     )
+    if qris_url_p:
+        em.set_thumbnail(url=qris_url_p)
     em.set_footer(text="⚠️ Panel ini hanya untuk Owner/Admin")
     await ctx.send(embed=em, view=PremiumSetupView())
 
@@ -1833,21 +1870,51 @@ async def giveaway_cmd(ctx, duration: str = None, *, prize: str = None):
 async def event_cmd(ctx, *, content: str = None):
     if await check_premium_gate(ctx, "event"): return
     if not content:
-        await ctx.reply("❓ Format: `!Doom event Nama|Deskripsi|HH:MM|#channel`")
+        await ctx.reply(
+            "❓ Format: `!Doom event Nama|Deskripsi|HH:MM|#channel|durasi_jam`\n"
+            "• `durasi_jam` = durasi event dalam jam (opsional, default: 1)\n"
+            "Contoh: `!Doom event Turnamen ML|Yuk gaskeun!|20:00|#announce|2`"
+        )
         return
     parts          = content.split("|")
     name           = parts[0].strip()
     desc           = parts[1].strip() if len(parts) > 1 else "Event seru!"
     start_time_str = parts[2].strip() if len(parts) > 2 else "Belum ditentukan"
     target_channel = ctx.channel
+
+    # Parse channel (part 3)
     if len(parts) > 3:
         if ctx.message.channel_mentions:
             target_channel = ctx.message.channel_mentions[0]
         else:
-            found = discord.utils.get(ctx.guild.channels, name=parts[3].strip().replace("#", ""))
+            raw_ch = parts[3].strip().replace("#", "")
+            # Bisa berupa channel ID atau nama
+            if raw_ch.isdigit():
+                found = ctx.guild.get_channel(int(raw_ch))
+            else:
+                found = discord.utils.get(ctx.guild.channels, name=raw_ch)
             if found:
                 target_channel = found
-    em = dark_red_embed(f"📅 EVENT: {name}", f"{desc}\n\n⏰ **Jam Mulai:** {start_time_str} WIB\n\n📢 Jangan sampe ketinggalan! Gas ikutan! 🔥")
+
+    # Parse durasi jam (part 4)
+    durasi_jam = 1.0
+    if len(parts) > 4:
+        try:
+            durasi_jam = float(parts[4].strip())
+            if durasi_jam <= 0:
+                durasi_jam = 1.0
+        except ValueError:
+            durasi_jam = 1.0
+
+    durasi_str = f"{int(durasi_jam)} jam" if durasi_jam == int(durasi_jam) else f"{durasi_jam} jam"
+
+    em = dark_red_embed(
+        f"📅 EVENT: {name}",
+        f"{desc}\n\n"
+        f"⏰ **Jam Mulai:** {start_time_str} WIB\n"
+        f"⏱️ **Durasi:** {durasi_str}\n\n"
+        "📢 Jangan sampe ketinggalan! Gas ikutan! 🔥"
+    )
     em.set_footer(text=f"Event oleh {ctx.author.display_name}")
     em.timestamp   = datetime.datetime.now(tz=WIB)
     event_msg      = await target_channel.send(content="@everyone", embed=em)
@@ -1859,14 +1926,28 @@ async def event_cmd(ctx, *, content: str = None):
         event_time = now_wib.replace(hour=naive.hour, minute=naive.minute, second=0, microsecond=0)
         if event_time <= now_wib:
             event_time += datetime.timedelta(days=1)
-        delay = (event_time - now_wib).total_seconds()
+        end_time   = event_time + datetime.timedelta(hours=durasi_jam)
+        delay      = (event_time - now_wib).total_seconds()
 
-        async def send_event_start(tc, em2, ev_name, ev_desc, ev_ts, sched_ts):
-            await asyncio.sleep(max(0, (sched_ts - datetime.datetime.now(tz=WIB)).total_seconds()))
-            start_em = dark_red_embed(f"🚨 EVENT MULAI: {ev_name}!", f"**{ev_desc}**\n\n🔥 DIMULAI SEKARANG!\n⏰ **{ev_ts} WIB**")
-            start_em.set_footer(text="Jangan ketinggalan! 🔥")
+        async def send_event_lifecycle(tc, ev_msg, ev_name, ev_desc, ev_ts, start_ts, end_ts, dur_str):
+            # === MULAI EVENT ===
+            wait_start = max(0, (start_ts - datetime.datetime.now(tz=WIB)).total_seconds())
+            await asyncio.sleep(wait_start)
+            start_em = discord.Embed(
+                title=f"🚨 EVENT MULAI: {ev_name}!",
+                description=(
+                    f"**{ev_desc}**\n\n"
+                    f"🔥 **EVENT DIMULAI SEKARANG!**\n"
+                    f"⏰ Jam Mulai: **{ev_ts} WIB**\n"
+                    f"⏱️ Durasi: **{dur_str}**\n"
+                    f"🏁 Berakhir: **{end_ts.strftime('%H:%M')} WIB**"
+                ),
+                color=0xFF4500
+            )
+            start_em.set_footer(text="Gas ikutan sebelum telat! 🔥")
+            start_em.timestamp = datetime.datetime.now(tz=WIB)
             try:
-                await em2.edit(embed=start_em)
+                await ev_msg.edit(embed=start_em)
             except:
                 pass
             try:
@@ -1874,12 +1955,44 @@ async def event_cmd(ctx, *, content: str = None):
             except:
                 pass
 
-        asyncio.create_task(send_event_start(target_channel, event_msg, name, desc, start_time_str, event_time))
+            # === SELESAI EVENT ===
+            wait_end = max(0, (end_ts - datetime.datetime.now(tz=WIB)).total_seconds())
+            await asyncio.sleep(wait_end)
+            end_em = discord.Embed(
+                title=f"🏁 EVENT SELESAI: {ev_name}",
+                description=(
+                    f"**{ev_desc}**\n\n"
+                    f"✅ Event telah **BERAKHIR**!\n"
+                    f"⏰ Mulai: **{ev_ts} WIB** | Selesai: **{end_ts.strftime('%H:%M')} WIB**\n"
+                    f"⏱️ Durasi: **{dur_str}**\n\n"
+                    "Makasih udah ikutan! 🎉"
+                ),
+                color=0x95A5A6
+            )
+            end_em.set_footer(text="Event telah berakhir.")
+            end_em.timestamp = datetime.datetime.now(tz=WIB)
+            try:
+                await ev_msg.edit(embed=end_em)
+            except:
+                pass
+            try:
+                await tc.send(content=f"🏁 **Event {ev_name} telah selesai!** Makasih semua yang ikutan!")
+            except:
+                pass
+
+        asyncio.create_task(send_event_lifecycle(
+            target_channel, event_msg, name, desc, start_time_str,
+            event_time, end_time, durasi_str
+        ))
         if target_channel == ctx.channel:
-            await ctx.reply(f"✅ Event **{name}** dikirim!\n⏰ Auto-announce jam **{start_time_str} WIB** ({int(delay//60)} menit lagi).")
+            await ctx.reply(
+                f"✅ Event **{name}** dikirim!\n"
+                f"⏰ Mulai: **{start_time_str} WIB** ({int(delay//60)} menit lagi)\n"
+                f"⏱️ Durasi: **{durasi_str}** | Selesai: **{end_time.strftime('%H:%M')} WIB**"
+            )
     except ValueError:
         if target_channel == ctx.channel:
-            await ctx.reply(f"✅ Event **{name}** dikirim! ⚠️ Format jam tidak valid, reminder dinonaktifkan.")
+            await ctx.reply(f"✅ Event **{name}** dikirim! ⚠️ Format jam tidak valid, auto-announce dinonaktifkan.")
 
 @bot.command(name="addemoji", aliases=["emoji"])
 @commands.has_permissions(manage_emojis=True)
@@ -1943,6 +2056,7 @@ async def premium_user_cmd(ctx):
     payment_info = settings.get("payment_info", "Hubungi admin untuk info pembayaran.")
     locked       = get_locked_commands()
     locked_txt   = ", ".join([f"`{c}`" for c in locked]) if locked else "*(tidak ada)*"
+    qris_url_main = settings.get("qris_url", "")
     em = discord.Embed(
         title="👑 RepublikDooms Premium",
         description=(
@@ -1955,6 +2069,8 @@ async def premium_user_cmd(ctx):
         ),
         color=0xFFD700
     )
+    if qris_url_main:
+        em.set_image(url=qris_url_main)
     em.set_footer(text="RepublikDooms Premium System")
 
     pkg_options = [discord.SelectOption(label=k, description=f"{v['price']} | {v['duration_days']} hari") for k, v in pkgs.items()]
@@ -1974,17 +2090,44 @@ async def premium_user_cmd(ctx):
                 return
             self.selected_pkg = interaction.data["values"][0]
             pkg = pkgs.get(self.selected_pkg, {})
-            await interaction.response.send_message(
-                f"✅ Paket dipilih: **{self.selected_pkg}** ({pkg.get('price','?')} | {pkg.get('duration_days',30)} hari)\n\n"
-                "📝 Sekarang ketik **bukti pembayaran** lo (foto/teks, max 60 detik):",
-                ephemeral=True
+            # Tampilkan QRIS + instruksi kirim bukti
+            pdata_inner  = get_premium_data()
+            payment_info = pdata_inner.get("settings", {}).get("payment_info", "Hubungi admin untuk info pembayaran.")
+            qris_url     = pdata_inner.get("settings", {}).get("qris_url", "")
+
+            info_em = discord.Embed(
+                title=f"💳 Pembayaran Paket {self.selected_pkg}",
+                description=(
+                    f"**💰 Harga:** {pkg.get('price','?')} | **⏳ Durasi:** {pkg.get('duration_days',30)} hari\n\n"
+                    f"**📋 Info Pembayaran:**\n```{payment_info}```\n\n"
+                    "📸 **Setelah bayar, kirim bukti pembayaran di sini!**\n"
+                    "*(Bisa berupa foto/screenshot — kirim sebagai gambar atau teks, timeout 120 detik)*"
+                ),
+                color=0xFFD700
             )
+            if qris_url:
+                info_em.set_image(url=qris_url)
+            info_em.set_footer(text="Kirim bukti pembayaran setelah transfer!")
+            await interaction.response.send_message(embed=info_em, ephemeral=True)
+
             try:
-                confirm_msg = await bot.wait_for("message", check=lambda m: m.author.id == interaction.user.id, timeout=60)
-                order_note  = confirm_msg.content[:500]
-                order_id    = hashlib.md5(f"{interaction.user.id}{time.time()}".encode()).hexdigest()[:8].upper()
-                duration    = pkg.get("duration_days", 30)
-                price_str   = pkg.get("price", "?")
+                # Tunggu bukti: bisa pesan teks, gambar attachment, atau keduanya
+                confirm_msg = await bot.wait_for(
+                    "message",
+                    check=lambda m: m.author.id == interaction.user.id,
+                    timeout=120
+                )
+                order_note   = confirm_msg.content[:500] if confirm_msg.content else "(Tidak ada teks)"
+                order_id     = hashlib.md5(f"{interaction.user.id}{time.time()}".encode()).hexdigest()[:8].upper()
+                duration     = pkg.get("duration_days", 30)
+                price_str    = pkg.get("price", "?")
+
+                # Cek apakah ada gambar attachment
+                proof_image_url = None
+                if confirm_msg.attachments:
+                    att = confirm_msg.attachments[0]
+                    if any(att.filename.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".gif", ".webp"]):
+                        proof_image_url = att.url
 
                 orders = get_premium_orders()
                 orders[order_id] = {
@@ -1992,10 +2135,13 @@ async def premium_user_cmd(ctx):
                     "guild_id": str(ctx.guild.id), "guild_name": ctx.guild.name,
                     "note": order_note, "package": self.selected_pkg,
                     "duration_days": duration, "price": price_str,
+                    "proof_image_url": proof_image_url,
                     "status": "pending", "ordered_at": time.time()
                 }
                 save_premium_orders(orders)
 
+                # Build order embed untuk owner
+                has_image = proof_image_url is not None
                 order_em = discord.Embed(
                     title="🛒 ORDER PREMIUM BARU!",
                     description=(
@@ -2006,12 +2152,15 @@ async def premium_user_cmd(ctx):
                         f"**💰 Harga:** {price_str}\n"
                         f"**⏳ Durasi:** {duration} hari\n"
                         f"**🕐 Waktu:** {datetime.datetime.now(tz=WIB).strftime('%d/%m/%Y %H:%M')} WIB\n\n"
-                        f"**📝 Bukti/Catatan:**\n```{order_note}```\n"
+                        f"**📝 Catatan/Teks Bukti:**\n```{order_note}```\n"
+                        f"**🖼️ Bukti Gambar:** {'✅ Ada (lihat gambar di bawah)' if has_image else '❌ Tidak ada gambar'}\n"
                         f"**🔖 Order ID:** `{order_id}`"
                     ),
                     color=0xFFD700
                 )
                 order_em.set_thumbnail(url=interaction.user.display_avatar.url)
+                if proof_image_url:
+                    order_em.set_image(url=proof_image_url)
                 order_em.set_footer(text=f"Order ID: {order_id}")
 
                 sent_ok = False
@@ -2269,40 +2418,112 @@ async def slash_autoresponse(interaction: discord.Interaction, aksi: str, trigge
     else:
         await interaction.response.send_message("❓ Aksi: `add`, `remove`, `list`", ephemeral=True)
 
-@tree.command(name="event", description="Kirim event ke channel")
-@app_commands.describe(nama="Nama event", deskripsi="Deskripsi", jam_mulai="HH:MM WIB", channel="Channel tujuan")
+@tree.command(name="event", description="Kirim event ke channel dengan durasi otomatis")
+@app_commands.describe(
+    nama="Nama event",
+    deskripsi="Deskripsi event",
+    jam_mulai="Jam mulai WIB format HH:MM (contoh: 20:00)",
+    durasi_jam="Durasi event dalam jam (contoh: 2 = 2 jam, 0.5 = 30 menit)",
+    channel="Channel tujuan announce (opsional)"
+)
 @app_commands.default_permissions(administrator=True)
-async def slash_event(interaction: discord.Interaction, nama: str, deskripsi: str, jam_mulai: str, channel: discord.TextChannel = None):
+async def slash_event(
+    interaction: discord.Interaction,
+    nama: str,
+    deskripsi: str,
+    jam_mulai: str,
+    durasi_jam: float = 1.0,
+    channel: discord.TextChannel = None
+):
+    if durasi_jam <= 0:
+        durasi_jam = 1.0
     target_channel = channel or interaction.channel
-    em = dark_red_embed(f"📅 EVENT: {nama}", f"{deskripsi}\n\n⏰ **Jam Mulai:** {jam_mulai} WIB\n\n📢 Gas ikutan! 🔥")
+    durasi_str = f"{int(durasi_jam)} jam" if durasi_jam == int(durasi_jam) else f"{durasi_jam} jam"
+
+    em = discord.Embed(
+        title=f"📅 EVENT: {nama}",
+        description=(
+            f"{deskripsi}\n\n"
+            f"⏰ **Jam Mulai:** {jam_mulai} WIB\n"
+            f"⏱️ **Durasi:** {durasi_str}\n\n"
+            "📢 Gas ikutan! 🔥"
+        ),
+        color=DARK_RED
+    )
     em.set_footer(text=f"Event oleh {interaction.user.display_name}")
-    em.timestamp   = datetime.datetime.now(tz=WIB)
-    event_msg      = await target_channel.send(content="@everyone", embed=em)
-    reply_text     = f"✅ Event **{nama}** dikirim ke {target_channel.mention}!"
+    em.timestamp = datetime.datetime.now(tz=WIB)
+    event_msg    = await target_channel.send(content="@everyone", embed=em)
+    reply_text   = f"✅ Event **{nama}** dikirim ke {target_channel.mention}!"
     try:
         now_wib    = datetime.datetime.now(tz=WIB)
         naive      = datetime.datetime.strptime(jam_mulai, "%H:%M")
         event_time = now_wib.replace(hour=naive.hour, minute=naive.minute, second=0, microsecond=0)
         if event_time <= now_wib:
             event_time += datetime.timedelta(days=1)
-        delay = (event_time - now_wib).total_seconds()
+        end_time   = event_time + datetime.timedelta(hours=durasi_jam)
+        delay      = (event_time - now_wib).total_seconds()
 
-        async def send_start(tc, em2, ev_n, ev_d, ev_j, sched):
-            await asyncio.sleep(max(0, (sched - datetime.datetime.now(tz=WIB)).total_seconds()))
-            s_em = dark_red_embed(f"🚨 EVENT MULAI: {ev_n}!", f"**{ev_d}**\n\n🔥 MULAI SEKARANG!\n⏰ **{ev_j} WIB**")
+        async def send_event_lifecycle_slash(tc, ev_msg, ev_name, ev_desc, ev_ts, start_ts, end_ts, dur_str):
+            # === MULAI EVENT ===
+            wait_start = max(0, (start_ts - datetime.datetime.now(tz=WIB)).total_seconds())
+            await asyncio.sleep(wait_start)
+            start_em = discord.Embed(
+                title=f"🚨 EVENT MULAI: {ev_name}!",
+                description=(
+                    f"**{ev_desc}**\n\n"
+                    f"🔥 **EVENT DIMULAI SEKARANG!**\n"
+                    f"⏰ Jam Mulai: **{ev_ts} WIB**\n"
+                    f"⏱️ Durasi: **{dur_str}**\n"
+                    f"🏁 Berakhir: **{end_ts.strftime('%H:%M')} WIB**"
+                ),
+                color=0xFF4500
+            )
+            start_em.set_footer(text="Gas ikutan sebelum telat! 🔥")
+            start_em.timestamp = datetime.datetime.now(tz=WIB)
             try:
-                await em2.edit(embed=s_em)
+                await ev_msg.edit(embed=start_em)
             except:
                 pass
             try:
-                await tc.send(content="@everyone 🚨 **EVENT DIMULAI!** 🚨")
+                await tc.send(content="@everyone 🚨 **EVENT DIMULAI SEKARANG!** 🚨")
             except:
                 pass
 
-        asyncio.create_task(send_start(target_channel, event_msg, nama, deskripsi, jam_mulai, event_time))
-        reply_text += f"\n⏰ Auto-announce jam **{jam_mulai} WIB** ({int(delay//60)} menit lagi)."
+            # === SELESAI EVENT ===
+            wait_end = max(0, (end_ts - datetime.datetime.now(tz=WIB)).total_seconds())
+            await asyncio.sleep(wait_end)
+            end_em = discord.Embed(
+                title=f"🏁 EVENT SELESAI: {ev_name}",
+                description=(
+                    f"**{ev_desc}**\n\n"
+                    f"✅ Event telah **BERAKHIR**!\n"
+                    f"⏰ Mulai: **{ev_ts} WIB** | Selesai: **{end_ts.strftime('%H:%M')} WIB**\n"
+                    f"⏱️ Durasi: **{dur_str}**\n\n"
+                    "Makasih udah ikutan! 🎉"
+                ),
+                color=0x95A5A6
+            )
+            end_em.set_footer(text="Event telah berakhir.")
+            end_em.timestamp = datetime.datetime.now(tz=WIB)
+            try:
+                await ev_msg.edit(embed=end_em)
+            except:
+                pass
+            try:
+                await tc.send(content=f"🏁 **Event {ev_name} telah selesai!** Makasih semua yang ikutan!")
+            except:
+                pass
+
+        asyncio.create_task(send_event_lifecycle_slash(
+            target_channel, event_msg, nama, deskripsi, jam_mulai,
+            event_time, end_time, durasi_str
+        ))
+        reply_text += (
+            f"\n⏰ Mulai: **{jam_mulai} WIB** ({int(delay//60)} menit lagi)"
+            f"\n⏱️ Durasi: **{durasi_str}** | Selesai: **{end_time.strftime('%H:%M')} WIB**"
+        )
     except ValueError:
-        reply_text += "\n⚠️ Format jam tidak valid (gunakan HH:MM)."
+        reply_text += "\n⚠️ Format jam tidak valid (gunakan HH:MM), auto-announce dinonaktifkan."
     await interaction.response.send_message(reply_text, ephemeral=True)
 
 @tree.command(name="tebak", description="Main tebak-tebakan!")
