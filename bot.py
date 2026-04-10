@@ -2331,7 +2331,6 @@ async def help_cmd(ctx):
     em.add_field(name="📢 Utility",   value="`embed` `setmainchannel` `sticky` `autoresponse` `giveaway` `event` `addemoji`", inline=False)
     em.add_field(name="👑 Premium",   value="`premium` — Lihat info & order premium",                  inline=False)
     em.add_field(name="🗳️ Vote",      value="`vote` — Link vote Top.gg | `claimvote` — Claim reward vote", inline=False)
-    em.add_field(name="🗳️ Vote",      value="`vote` — Link vote Top.gg | `claimvote` — Claim reward vote", inline=False)
     em.add_field(name="🎰 Slash",     value="`/ticket` `/leveling` `/reactionrole` `/ping` `/fish` dan banyak lagi!", inline=False)
     em.set_footer(text="Prefix: !Doom | Semua command bisa pake slash juga!")
     await ctx.reply(embed=em)
@@ -2722,7 +2721,7 @@ async def vote_cmd(ctx):
     em.set_thumbnail(url=bot.user.display_avatar.url)
     await ctx.reply(embed=em)
 
-@bot.command(name="claimvote", aliases=["claimvote", "voteclaim"])
+@bot.command(name="claimvote", aliases=["voteclaim"])
 async def claimvote_cmd(ctx):
     """Claim reward setelah vote di Top.gg."""
     if await check_maintenance(ctx):
