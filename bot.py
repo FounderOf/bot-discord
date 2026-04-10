@@ -266,10 +266,11 @@ def dark_red_embed(title="", description="", **kwargs):
 
 
 # ===================== LANGUAGE SYSTEM =====================
-# Bahasa: id_gaul (default owner), en, de, ar, th, ja
+# Bahasa: id_gaul (khusus owner bot), id (Indonesia Gaul untuk user/admin), en (default), de, ar, th, ja
 
 SUPPORTED_LANGS = {
-    "id_gaul": "🇮🇩 Indonesia Gaul",
+    "id_gaul": "🇮🇩 Indonesia Gaul (Owner Only)",
+    "id":      "🇮🇩 Indonesia Gaul",
     "en":      "🇬🇧 English",
     "de":      "🇩🇪 Deutsch",
     "ar":      "🇸🇦 العربية",
@@ -627,12 +628,19 @@ def get_user_lang(user_id) -> str:
     Return kode bahasa user.
     Owner bot → selalu id_gaul (tidak bisa diubah).
     User lain → dari lang.json, default 'en'.
+    Jika user non-owner tersimpan sebagai 'id_gaul' (data lama), otomatis di-reset ke 'en'.
     """
     uid = str(user_id)
     if OWNER_ID and int(uid) == OWNER_ID:
         return "id_gaul"
     data = get_lang_data()
-    return data.get(uid, "en")
+    lang = data.get(uid, "en")
+    # Kalau user non-owner punya data lama "id_gaul", reset ke "en" dan simpan
+    if lang == "id_gaul":
+        data[uid] = "en"
+        save_lang_data(data)
+        return "en"
+    return lang
 
 def set_user_lang(user_id, lang_code: str):
     data = get_lang_data()
@@ -772,7 +780,7 @@ def premium_required(ctx_or_interaction):
         ),
         color=0xFFD700
     )
-    em.set_footer(text="RepublikDooms Premium System")
+    em.set_footer(text="DOOMINIKS PARADISE · Premium System")
     return False, em
 
 # ===================== PREMIUM COMMAND GATE =====================
@@ -824,24 +832,36 @@ async def _resync_slash_descriptions():
 
 
 def premium_block_embed(user_id=None) -> discord.Embed:
-    """Embed notifikasi command terkunci premium."""
+    """Embed notifikasi command terkunci premium — tampilan profesional."""
     uid      = user_id or 0
     pdata    = get_premium_data()
     pkgs     = get_premium_packages()
-    lang     = get_user_lang(uid) if uid else "en"
-    pkg_text = "\n".join([f"• **{k}** — {v['price']} | {v['duration_days']} {'hari' if lang == 'id_gaul' else 'days' if lang == 'en' else 'Tage' if lang == 'de' else 'أيام' if lang == 'ar' else 'วัน' if lang == 'th' else '日'}" for k, v in pkgs.items()])
-    payment_info = pdata.get("settings", {}).get("payment_info", "Type `!Doom premium` for info.")
-    qris_url     = pdata.get("settings", {}).get("qris_url", "")
+    qris_url = pdata.get("settings", {}).get("qris_url", "")
+
+    # Build paket lines singkat
+    pkg_lines = []
+    badges    = ["🥉", "🥈", "🥇"]
+    for i, (k, v) in enumerate(pkgs.items()):
+        badge = badges[i] if i < len(badges) else "👑"
+        pkg_lines.append(f"{badge} **{k}** — {v['price']} · {v['duration_days']} days")
+    pkg_text = "\n".join(pkg_lines) if pkg_lines else "No packages available."
+
     em = discord.Embed(
-        title=t("premium_locked_title", uid),
-        description=t("premium_locked_desc", uid,
-            packages=pkg_text, payment=payment_info
+        title="🔒 Premium Feature",
+        description=(
+            "This command is **locked** and only available to **Premium** members.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "**📦 Available Packages**\n"
+            f"{pkg_text}\n\n"
+            "Type `!Doom premium` to see full details & order now!\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "✨ Unlock all exclusive features by upgrading to Premium."
         ),
         color=0xFFD700
     )
     if qris_url:
-        em.set_image(url=qris_url)
-    em.set_footer(text="RepublikDooms Premium System")
+        em.set_thumbnail(url=qris_url)
+    em.set_footer(text="DOOMINIKS PARADISE · Premium System")
     return em
 
 
@@ -866,7 +886,7 @@ async def check_premium_gate(ctx, command_name: str) -> bool:
     # Blocked — user belum premium
     # Tampilkan embed premium dengan nama command yang dikunci
     em = premium_block_embed(ctx.author.id)
-    em.set_footer(text=f"👑 Command `{command_name}` memerlukan Premium | RepublikDooms")
+    em.set_footer(text=f"DOOMINIKS PARADISE · Premium · Command `{command_name}` is locked")
     await ctx.reply(embed=em)
     return True
 
@@ -887,7 +907,7 @@ async def check_premium_gate_slash(interaction: discord.Interaction, command_nam
         return False
 
     em = premium_block_embed(interaction.user.id)
-    em.set_footer(text=f"👑 Command `/{command_name}` memerlukan Premium | RepublikDooms")
+    em.set_footer(text=f"DOOMINIKS PARADISE · Premium · Command `/{command_name}` is locked")
     await interaction.response.send_message(embed=em, ephemeral=True)
     return True
 
@@ -913,7 +933,7 @@ async def check_maintenance(ctx) -> bool:
 async def on_ready():
     print(f"✅ {bot.user} udah nyala bro!")
     await bot.change_presence(
-        activity=discord.Activity(type=discord.ActivityType.watching, name="RepublikDooms | !Doom help")
+        activity=discord.Activity(type=discord.ActivityType.watching, name="DOOMINIKS PARADISE | !Doom help")
     )
     try:
         synced = await tree.sync()
@@ -1837,19 +1857,41 @@ class PremiumOrderView(discord.ui.View):
         try:
             user    = await bot.fetch_user(self.user_id)
             expires = datetime.datetime.fromtimestamp(pdata["users"][str(self.user_id)]["expires_at"], tz=WIB)
-            dm_em   = discord.Embed(
-                title="👑 Premium Akses Disetujui!",
+            dm_em = discord.Embed(
+                title="👑 Premium Access Activated!",
                 description=(
-                    f"Halo **{user.display_name}**! 🎉\n\n"
-                    f"Order premium lo sudah **DIAPPROVE**!\n\n"
-                    f"**📦 Paket:** {order.get('package', 'Premium')}\n"
-                    f"**⏳ Durasi:** {duration_days} hari\n"
-                    f"**📅 Berakhir:** {expires.strftime('%d/%m/%Y %H:%M')} WIB\n\n"
-                    "Makasih udah order premium! Enjoy! 🚀"
+                    "Your premium order has been **approved**!\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━"
                 ),
-                color=0x00FF00
+                color=0xFFD700
             )
-            dm_em.set_footer(text="RepublikDooms Premium System")
+            dm_em.set_thumbnail(url=user.display_avatar.url)
+            dm_em.add_field(
+                name="🎉 Welcome to Premium!",
+                value=(
+                    f"**Hey {user.display_name}**, your access is now active.\n"
+                    "Enjoy all the exclusive features!"
+                ),
+                inline=False
+            )
+            dm_em.add_field(
+                name="📋 Subscription Details",
+                value=(
+                    f"**Package** · {order.get('package', 'Premium')}\n"
+                    f"**Duration** · {duration_days} days\n"
+                    f"**Expires** · {expires.strftime('%d %B %Y, %H:%M')} WIB"
+                ),
+                inline=False
+            )
+            dm_em.add_field(
+                name="💡 Get Started",
+                value=(
+                    "Use `!Doom premium` to check your status anytime.\n"
+                    "Thank you for supporting **DOOMINIKS PARADISE**! 🙏"
+                ),
+                inline=False
+            )
+            dm_em.set_footer(text="DOOMINIKS PARADISE · Premium System")
             await user.send(embed=dm_em)
         except Exception as e:
             print(f"Gagal DM user premium: {e}")
@@ -1875,7 +1917,20 @@ class PremiumOrderView(discord.ui.View):
         save_premium_orders(orders)
         try:
             user  = await bot.fetch_user(self.user_id)
-            dm_em = dark_red_embed("❌ Order Premium Ditolak", f"Maaf **{user.display_name}**, order premium lo **DITOLAK**.\n\nHubungi admin untuk info lebih lanjut.")
+            dm_em = discord.Embed(
+                title="❌ Order Not Approved",
+                description=(
+                    "━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Hey **{user.display_name}**, unfortunately your premium order was **not approved**.\n\n"
+                    "This may be due to:\n"
+                    "• Invalid or unclear payment proof\n"
+                    "• Payment amount mismatch\n"
+                    "• Other verification issues\n\n"
+                    "Please contact the admin for more information or try ordering again."
+                ),
+                color=0xFF4444
+            )
+            dm_em.set_footer(text="DOOMINIKS PARADISE · Premium System")
             await user.send(embed=dm_em)
         except:
             pass
@@ -1897,7 +1952,7 @@ class PremiumOrderView(discord.ui.View):
             msg  = await bot.wait_for("message", check=lambda m: m.author.id == interaction.user.id, timeout=60)
             user = await bot.fetch_user(self.user_id)
             dm_em = dark_red_embed(
-                "📩 Pesan dari Admin RepublikDooms",
+                "📩 Message from DOOMINIKS PARADISE Admin",
                 f"**Halo {user.display_name}!**\n\n```{msg.content}```\n*Ref Order: `{self.order_id}`*"
             )
             dm_em.set_footer(text=f"Dikirim oleh {interaction.user.display_name}")
@@ -2309,7 +2364,7 @@ async def broadcast_maintenance(active: bool, reason: str):
                     ),
                     color=0xFF6600
                 )
-                em.set_footer(text="RepublikDooms Bot System")
+                em.set_footer(text="DOOMINIKS PARADISE · Bot System")
                 em.timestamp = datetime.datetime.now(tz=WIB)
             else:
                 em = discord.Embed(
@@ -2321,7 +2376,7 @@ async def broadcast_maintenance(active: bool, reason: str):
                     ),
                     color=0x00FF00
                 )
-                em.set_footer(text="RepublikDooms Bot System")
+                em.set_footer(text="DOOMINIKS PARADISE · Bot System")
                 em.timestamp = datetime.datetime.now(tz=WIB)
             await target_ch.send(embed=em)
         except Exception as e:
@@ -2367,7 +2422,7 @@ async def on_guild_join(guild: discord.Guild):
             )
             if guild.icon:
                 owner_em.set_thumbnail(url=guild.icon.url)
-            owner_em.set_footer(text="RepublikDooms Bot System")
+            owner_em.set_footer(text="DOOMINIKS PARADISE · Bot System")
             owner_em.timestamp = datetime.datetime.now(tz=WIB)
             await owner.send(embed=owner_em)
         except Exception as e:
@@ -2491,7 +2546,7 @@ async def ping_cmd(ctx):
 async def fishing_cmd(ctx):
     if await check_maintenance(ctx): return
     if await check_premium_gate(ctx, "fish"): return
-    em = dark_red_embed("🎣 Fishing RepublikDooms", f"Halo **{ctx.author.display_name}**! Pilih aksi lo:")
+    em = dark_red_embed("🎣 DOOMINIKS PARADISE Fishing", f"Hey **{ctx.author.display_name}**! Choose your action:")
     await ctx.reply(embed=em, view=FishingMainView(ctx.author.id))
 
 @bot.command(name="tebak")
@@ -2977,56 +3032,114 @@ async def premium_user_cmd(ctx):
     settings = pdata.get("settings", {})
     webhook_url = settings.get("webhook_url", "")
 
-    # Cek jika sudah premium
+    # ── Sudah Premium: tampilkan status card ────────────────────────────────
     if u_prem.get("active") and (not u_prem.get("expires_at") or time.time() < u_prem.get("expires_at", 0)):
-        exp_at   = u_prem.get("expires_at")
-        exp_txt  = datetime.datetime.fromtimestamp(exp_at, tz=WIB).strftime('%d/%m/%Y %H:%M') if exp_at else "Permanen"
-        locked   = get_locked_commands()
-        cmd_txt  = ", ".join([f"`{c}`" for c in locked]) if locked else "*(semua command bebas)*"
+        exp_at      = u_prem.get("expires_at")
+        activated   = u_prem.get("activated_at", 0)
+        exp_dt      = datetime.datetime.fromtimestamp(exp_at, tz=WIB) if exp_at else None
+        act_dt      = datetime.datetime.fromtimestamp(activated, tz=WIB) if activated else None
+        exp_txt     = exp_dt.strftime("%d %B %Y, %H:%M") + " WIB" if exp_dt else "Lifetime"
+        act_txt     = act_dt.strftime("%d %B %Y") if act_dt else "-"
+        # Hitung sisa hari
+        if exp_at:
+            sisa_detik = max(0, int(exp_at - time.time()))
+            sisa_hari  = sisa_detik // 86400
+            sisa_jam   = (sisa_detik % 86400) // 3600
+            sisa_txt   = f"{sisa_hari}d {sisa_jam}h remaining"
+            # Progress bar (10 kotak)
+            total_dur  = u_prem.get("duration_days", 30) * 86400 or 1
+            pct        = max(0.0, min(1.0, (exp_at - time.time()) / total_dur))
+            filled     = int(pct * 10)
+            bar        = "█" * filled + "░" * (10 - filled)
+            bar_txt    = f"`[{bar}]` {int(pct*100)}%"
+        else:
+            sisa_txt = "Lifetime Access"
+            bar_txt  = "`[██████████]` ∞"
+        locked  = get_locked_commands()
+        cmd_txt = " · ".join([f"`{cmd}`" for cmd in locked]) if locked else "*All commands unlocked*"
         em = discord.Embed(
-            title="👑 Status Premium Lo",
-            description=(
-                f"✅ Lo punya **PREMIUM AKTIF** bro!\n\n"
-                f"**📦 Paket:** {u_prem.get('package', 'Premium')}\n"
-                f"**📅 Berakhir:** {exp_txt} WIB\n\n"
-                f"**🔓 Command Premium yang Bisa Lo Akses:**\n{cmd_txt}\n\n"
-                "Nikmatin semua fitur premium ya! 🚀"
-            ),
-            color=0x00FF00
+            title="👑 Your Premium Status",
+            color=0xFFD700
         )
-        em.set_footer(text="RepublikDooms Premium System")
+        em.set_thumbnail(url=ctx.author.display_avatar.url)
+        em.add_field(
+            name="━━━━━━━━━━━━━━━━━━━━━━",
+            value=(
+                f"**Package** · {u_prem.get('package', 'Premium')}\n"
+                f"**Activated** · {act_txt}\n"
+                f"**Expires** · {exp_txt}\n"
+                f"**Time Left** · {sisa_txt}"
+            ),
+            inline=False
+        )
+        em.add_field(name="⏳ Subscription Progress", value=bar_txt, inline=False)
+        em.add_field(name="🔓 Premium Commands", value=cmd_txt, inline=False)
+        em.set_footer(text="DOOMINIKS PARADISE · Premium System · Thank you for your support! 🙏")
         await ctx.reply(embed=em)
         return
 
-    # Tampilkan paket & info pembayaran
-    pkg_text    = "\n".join([f"**{k}** — {v['price']} | {v['duration_days']} hari\n  _{v.get('description', '')}_" for k, v in pkgs.items()])
-    payment_info = settings.get("payment_info", "Hubungi admin untuk info pembayaran.")
-    locked       = get_locked_commands()
-    locked_txt   = ", ".join([f"`{c}`" for c in locked]) if locked else "*(tidak ada)*"
+    # ── Belum Premium: tampilkan halaman utama premium ───────────────────────
+    payment_info  = settings.get("payment_info", "Contact admin for payment info.")
+    locked        = get_locked_commands()
+    locked_txt    = " · ".join([f"`{cmd}`" for cmd in locked]) if locked else "*None*"
     qris_url_main = settings.get("qris_url", "")
+
+    # Build paket cards
+    badges     = ["🥉 Starter", "🥈 Popular", "🥇 Best Value"]
+    pkg_lines  = []
+    for i, (k, v) in enumerate(pkgs.items()):
+        badge = badges[i] if i < len(badges) else "👑 Elite"
+        desc  = v.get("description", "")
+        pkg_lines.append(
+            f"{badge}\n"
+            f"**{k}** — **{v['price']}**\n"
+            f"⏳ {v['duration_days']} days access"
+            + (f"\n_{desc}_" if desc else "")
+        )
+    pkg_text = "\n\n".join(pkg_lines) if pkg_lines else "No packages available."
+
     em = discord.Embed(
-        title="👑 RepublikDooms Premium",
+        title="👑 DOOMINIKS PARADISE — Premium",
         description=(
-            f"Upgrade ke **PREMIUM** dan nikmatin fitur eksklusif!\n\n"
-            f"**🔒 Command yang Dikunci Premium:**\n{locked_txt}\n\n"
-            f"**📦 Paket Tersedia:**\n{pkg_text}\n\n"
-            f"**💳 Info Pembayaran:**\n```{payment_info}```\n\n"
-            "**📌 Cara Order:**\nKlik tombol di bawah → pilih paket → kirim bukti pembayaran!\n"
-            "Admin akan review dan approve order lo segera. 🙏"
+            "Unlock exclusive features and support the bot!\n"
+            "━━━━━━━━━━━━━━━━━━━━━━"
         ),
         color=0xFFD700
     )
+    em.add_field(name="🔒 Locked Commands", value=locked_txt, inline=False)
+    em.add_field(name="━━━━━━━━━━━━━━━━━━━━━━", value="**📦 Available Packages**", inline=False)
+    em.add_field(name="​", value=pkg_text, inline=False)
+    em.add_field(
+        name="💳 Payment Info",
+        value=f"```{payment_info}```",
+        inline=False
+    )
+    em.add_field(
+        name="📌 How to Order",
+        value=(
+            "1️⃣ Select a package below\n"
+            "2️⃣ Complete the payment\n"
+            "3️⃣ Send your payment proof\n"
+            "4️⃣ Wait for admin approval\n"
+            "5️⃣ Get your premium access! 🎉"
+        ),
+        inline=False
+    )
     if qris_url_main:
         em.set_image(url=qris_url_main)
-    em.set_footer(text="RepublikDooms Premium System")
+    em.set_footer(text="DOOMINIKS PARADISE · Premium System · Select a package below to order")
 
-    pkg_options = [discord.SelectOption(label=k, description=f"{v['price']} | {v['duration_days']} hari") for k, v in pkgs.items()]
+    pkg_options = [discord.SelectOption(
+        label=k,
+        description=f"{v['price']} · {v['duration_days']} days",
+        emoji="👑"
+    ) for k, v in pkgs.items()]
 
     class OrderPremiumView(discord.ui.View):
         def __init__(self):
             super().__init__(timeout=120)
             if pkg_options:
-                select = discord.ui.Select(placeholder="Pilih paket...", options=pkg_options)
+                select = discord.ui.Select(placeholder="🛒 Select a package to order...", options=pkg_options)
                 select.callback = self.select_package
                 self.add_item(select)
             self.selected_pkg = None
@@ -3043,18 +3156,42 @@ async def premium_user_cmd(ctx):
             qris_url     = pdata_inner.get("settings", {}).get("qris_url", "")
 
             info_em = discord.Embed(
-                title=f"💳 Pembayaran Paket {self.selected_pkg}",
+                title=f"💳 Order Summary — {self.selected_pkg}",
                 description=(
-                    f"**💰 Harga:** {pkg.get('price','?')} | **⏳ Durasi:** {pkg.get('duration_days',30)} hari\n\n"
-                    f"**📋 Info Pembayaran:**\n```{payment_info}```\n\n"
-                    "📸 **Setelah bayar, kirim bukti pembayaran di sini!**\n"
-                    "*(Bisa berupa foto/screenshot — kirim sebagai gambar atau teks, timeout 120 detik)*"
+                    "Please complete your payment and send the proof below.\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━"
                 ),
                 color=0xFFD700
             )
+            info_em.add_field(
+                name="📦 Package Details",
+                value=(
+                    f"**Package** · {self.selected_pkg}\n"
+                    f"**Price** · {pkg.get('price', '?')}\n"
+                    f"**Duration** · {pkg.get('duration_days', 30)} days\n"
+                    f"**Description** · {pkg.get('description', '-')}"
+                ),
+                inline=False
+            )
+            info_em.add_field(
+                name="💳 Payment Method",
+                value=f"```{payment_info}```",
+                inline=False
+            )
+            info_em.add_field(
+                name="📋 Steps",
+                value=(
+                    "1️⃣ Transfer to the account above\n"
+                    "2️⃣ Take a screenshot of your payment\n"
+                    "3️⃣ **Send the screenshot here** (as image attachment)\n"
+                    "4️⃣ Wait for admin approval — usually within 24 hours\n\n"
+                    "⏰ *Timeout: 120 seconds*"
+                ),
+                inline=False
+            )
             if qris_url:
                 info_em.set_image(url=qris_url)
-            info_em.set_footer(text="Kirim bukti pembayaran setelah transfer!")
+            info_em.set_footer(text="DOOMINIKS PARADISE · Send your payment proof after transfer")
             await interaction.response.send_message(embed=info_em, ephemeral=True)
 
             try:
@@ -3087,28 +3224,50 @@ async def premium_user_cmd(ctx):
                 }
                 save_premium_orders(orders)
 
-                # Build order embed untuk owner
+                # Build order embed untuk owner — clean receipt style
                 has_image = proof_image_url is not None
-                order_em = discord.Embed(
-                    title="🛒 ORDER PREMIUM BARU!",
+                order_em  = discord.Embed(
+                    title="🛒 New Premium Order",
                     description=(
-                        f"**👤 User:** {interaction.user.mention} (`{interaction.user}`)\n"
-                        f"**🆔 User ID:** `{interaction.user.id}`\n"
-                        f"**🏠 Server:** {ctx.guild.name}\n"
-                        f"**📦 Paket:** {self.selected_pkg}\n"
-                        f"**💰 Harga:** {price_str}\n"
-                        f"**⏳ Durasi:** {duration} hari\n"
-                        f"**🕐 Waktu:** {datetime.datetime.now(tz=WIB).strftime('%d/%m/%Y %H:%M')} WIB\n\n"
-                        f"**📝 Catatan/Teks Bukti:**\n```{order_note}```\n"
-                        f"**🖼️ Bukti Gambar:** {'✅ Ada (lihat gambar di bawah)' if has_image else '❌ Tidak ada gambar'}\n"
-                        f"**🔖 Order ID:** `{order_id}`"
+                        "A new premium order has been submitted and is awaiting your review.\n"
+                        "━━━━━━━━━━━━━━━━━━━━━━"
                     ),
                     color=0xFFD700
                 )
                 order_em.set_thumbnail(url=interaction.user.display_avatar.url)
+                order_em.add_field(
+                    name="👤 Customer",
+                    value=(
+                        f"{interaction.user.mention}\n"
+                        f"`{interaction.user}` · ID: `{interaction.user.id}`\n"
+                        f"Server: **{ctx.guild.name}**"
+                    ),
+                    inline=False
+                )
+                order_em.add_field(
+                    name="📦 Order Details",
+                    value=(
+                        f"**Package** · {self.selected_pkg}\n"
+                        f"**Price** · {price_str}\n"
+                        f"**Duration** · {duration} days\n"
+                        f"**Order ID** · `{order_id}`\n"
+                        f"**Submitted** · {datetime.datetime.now(tz=WIB).strftime('%d %B %Y, %H:%M')} WIB"
+                    ),
+                    inline=False
+                )
+                order_em.add_field(
+                    name="📝 Payment Note",
+                    value=f"```{order_note[:400]}```",
+                    inline=False
+                )
+                order_em.add_field(
+                    name="🖼️ Payment Proof",
+                    value="✅ Image attached below" if has_image else "❌ No image provided",
+                    inline=False
+                )
                 if proof_image_url:
                     order_em.set_image(url=proof_image_url)
-                order_em.set_footer(text=f"Order ID: {order_id}")
+                order_em.set_footer(text=f"DOOMINIKS PARADISE · Order ID: {order_id}")
 
                 sent_ok = False
                 if webhook_url:
@@ -3126,14 +3285,36 @@ async def premium_user_cmd(ctx):
                     except Exception as e:
                         print(f"DM owner error: {e}")
 
-                conf_em = dark_red_embed(
-                    "✅ Order Terkirim!",
-                    f"Order lo sudah dikirim ke admin!\n\n"
-                    f"**🔖 Order ID:** `{order_id}`\n"
-                    f"**📦 Paket:** {self.selected_pkg}\n"
-                    f"**⏳ Status:** Pending Review\n\n"
-                    "Admin akan DM lo kalau sudah diapprove. Sabar ya! 🙏"
+                conf_em = discord.Embed(
+                    title="✅ Order Submitted Successfully!",
+                    description=(
+                        "Your order has been sent to the admin for review.\n"
+                        "━━━━━━━━━━━━━━━━━━━━━━"
+                    ),
+                    color=0x00FF88
                 )
+                conf_em.add_field(
+                    name="🧾 Order Receipt",
+                    value=(
+                        f"**Order ID** · `{order_id}`\n"
+                        f"**Package** · {self.selected_pkg}\n"
+                        f"**Price** · {price_str}\n"
+                        f"**Duration** · {duration} days\n"
+                        f"**Submitted** · {datetime.datetime.now(tz=WIB).strftime('%d %B %Y, %H:%M')} WIB"
+                    ),
+                    inline=False
+                )
+                conf_em.add_field(
+                    name="⏳ What's Next?",
+                    value=(
+                        "• Admin will review your payment proof\n"
+                        "• You will receive a **DM notification** once approved\n"
+                        "• Approval is usually within **24 hours**\n\n"
+                        "Save your **Order ID** for reference: `" + order_id + "`"
+                    ),
+                    inline=False
+                )
+                conf_em.set_footer(text="DOOMINIKS PARADISE · Premium System · Thank you for your order!")
                 await interaction.followup.send(embed=conf_em, ephemeral=True)
             except asyncio.TimeoutError:
                 await interaction.followup.send("⏰ Timeout! Order dibatalkan.", ephemeral=True)
@@ -3204,7 +3385,7 @@ async def setlang_cmd(ctx, lang_code: str = None):
 async def help_cmd(ctx):
     if await check_maintenance(ctx):
         return
-    em = dark_red_embed("📖 RepublikDooms - Help", "Bot gaul lengkap buat server lo!")
+    em = dark_red_embed("📖 DOOMINIKS PARADISE — Help", "Your complete multipurpose server bot!")
     em.add_field(name="🎣 Fishing",   value="`fish` `coins`",                                         inline=True)
     em.add_field(name="🧠 Tebak-Tebakan", value="`tebak` `addtebak` `listtebak` `removetebak` | `/tebak` (Arena) `/tambahsoal`", inline=True)
     em.add_field(name="⚠️ Mod",       value="`warn` `warns` `kick` `ban` `timeout` `move` `clear`",  inline=False)
@@ -3233,7 +3414,7 @@ async def slash_fish(interaction: discord.Interaction):
         await interaction.response.send_message(embed=discord.Embed(title="🔧 Maintenance", description=f"Bot sedang maintenance.\n**Alasan:** {maint.get('reason','')}", color=0xFF6600), ephemeral=True)
         return
     if await check_premium_gate_slash(interaction, "fish"): return
-    em = dark_red_embed("🎣 Fishing RepublikDooms", f"Halo **{interaction.user.display_name}**! Pilih aksi lo:")
+    em = dark_red_embed("🎣 DOOMINIKS PARADISE Fishing", f"Hey **{interaction.user.display_name}**! Choose your action:")
     await interaction.response.send_message(embed=em, view=FishingMainView(interaction.user.id))
 
 @tree.command(name="ticket", description="Setup panel ticket")
@@ -3902,7 +4083,7 @@ async def slash_setmaintenancechannel(interaction: discord.Interaction, channel:
         ),
         color=0x00FF88
     )
-    em.set_footer(text=f"Server: {interaction.guild.name} | RepublikDooms Bot System")
+    em.set_footer(text=f"DOOMINIKS PARADISE · Bot System · {interaction.guild.name}")
     await interaction.response.send_message(embed=em, ephemeral=True)
     # Kirim konfirmasi ke channel yang dipilih
     try:
@@ -3916,7 +4097,7 @@ async def slash_setmaintenancechannel(interaction: discord.Interaction, channel:
             ),
             color=DARK_RED
         )
-        notif_em.set_footer(text="RepublikDooms Bot System")
+        notif_em.set_footer(text="DOOMINIKS PARADISE · Bot System")
         notif_em.timestamp = datetime.datetime.now(tz=WIB)
         await channel.send(embed=notif_em)
     except:
@@ -3946,7 +4127,7 @@ async def prefix_setmaintenancechannel(ctx, channel: discord.TextChannel = None)
         ),
         color=0x00FF88
     )
-    em.set_footer(text=f"Server: {ctx.guild.name} | RepublikDooms Bot System")
+    em.set_footer(text=f"DOOMINIKS PARADISE · Bot System · {ctx.guild.name}")
     await ctx.reply(embed=em)
     try:
         notif_em = discord.Embed(
@@ -3959,7 +4140,7 @@ async def prefix_setmaintenancechannel(ctx, channel: discord.TextChannel = None)
             ),
             color=DARK_RED
         )
-        notif_em.set_footer(text="RepublikDooms Bot System")
+        notif_em.set_footer(text="DOOMINIKS PARADISE · Bot System")
         notif_em.timestamp = datetime.datetime.now(tz=WIB)
         await channel.send(embed=notif_em)
     except:
@@ -3983,7 +4164,7 @@ async def vote_cmd(ctx):
         ),
         color=DARK_RED
     )
-    em.set_footer(text="RepublikDooms | Vote every 12 hours!")
+    em.set_footer(text="DOOMINIKS PARADISE | Vote every 12 hours!")
     em.set_thumbnail(url=bot.user.display_avatar.url)
     await ctx.reply(embed=em)
 
@@ -4065,7 +4246,7 @@ async def claimvote_cmd(ctx):
         color=0x00FF88
     )
     em.set_thumbnail(url=ctx.author.display_avatar.url)
-    em.set_footer(text="RepublikDooms | Thanks for voting! 🗳️")
+    em.set_footer(text="DOOMINIKS PARADISE | Thanks for voting! 🗳️")
     await ctx.reply(embed=em)
 
 # ===================== TOP.GG WEBHOOK SERVER (Flask) =====================
