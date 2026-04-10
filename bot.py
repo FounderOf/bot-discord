@@ -805,7 +805,10 @@ async def check_premium_gate(ctx, command_name: str) -> bool:
         return False  # user premium, lanjut
 
     # Blocked — user belum premium
-    await ctx.reply(embed=premium_block_embed(ctx.author.id))
+    # Tampilkan embed premium dengan nama command yang dikunci
+    em = premium_block_embed(ctx.author.id)
+    em.set_footer(text=f"👑 Command `{command_name}` memerlukan Premium | RepublikDooms")
+    await ctx.reply(embed=em)
     return True
 
 async def check_premium_gate_slash(interaction: discord.Interaction, command_name: str) -> bool:
@@ -824,7 +827,9 @@ async def check_premium_gate_slash(interaction: discord.Interaction, command_nam
     if is_premium(str(interaction.user.id)):
         return False
 
-    await interaction.response.send_message(embed=premium_block_embed(interaction.user.id), ephemeral=True)
+    em = premium_block_embed(interaction.user.id)
+    em.set_footer(text=f"👑 Command `/{command_name}` memerlukan Premium | RepublikDooms")
+    await interaction.response.send_message(embed=em, ephemeral=True)
     return True
 
 # ===================== MAINTENANCE CHECK =====================
@@ -2757,7 +2762,7 @@ async def slash_ping(interaction: discord.Interaction):
     em = dark_red_embed("🏓 Pong!", f"**Latency:** `{latency}ms`\n**Status:** {'🟢 Lancar' if latency < 100 else '🟡 Agak lambat' if latency < 200 else '🔴 Lambat'}")
     await interaction.response.send_message(embed=em)
 
-@tree.command(name="fish", description="Mulai mancing!")
+@tree.command(name="fish", description="Mulai mancing! | 👑 Bisa dikunci Premium")
 async def slash_fish(interaction: discord.Interaction):
     maint = get_maintenance()
     if maint.get("active") and interaction.user.id != OWNER_ID:
@@ -2767,7 +2772,7 @@ async def slash_fish(interaction: discord.Interaction):
     em = dark_red_embed("🎣 Fishing RepublikDooms", f"Halo **{interaction.user.display_name}**! Pilih aksi lo:")
     await interaction.response.send_message(embed=em, view=FishingMainView(interaction.user.id))
 
-@tree.command(name="ticket", description="Setup panel ticket")
+@tree.command(name="ticket", description="Setup panel ticket | 👑 Bisa dikunci Premium")
 @app_commands.describe(judul="Judul embed", deskripsi="Deskripsi panel", button_label="Label button", button_emoji="Emoji button", kategori="ID kategori")
 @app_commands.default_permissions(administrator=True)
 async def slash_ticket(interaction: discord.Interaction, judul: str = "🎫 Support Ticket", deskripsi: str = "Klik button untuk buka ticket!", button_label: str = "Buka Ticket", button_emoji: str = "🎫", kategori: str = None):
@@ -2781,7 +2786,7 @@ async def slash_ticket(interaction: discord.Interaction, judul: str = "🎫 Supp
     td.setdefault("panels", {})[panel_id] = panel_config
     save_tickets(td)
 
-@tree.command(name="leveling", description="Setup fitur leveling")
+@tree.command(name="leveling", description="Setup fitur leveling | 👑 Bisa dikunci Premium")
 @app_commands.default_permissions(administrator=True)
 async def slash_leveling(interaction: discord.Interaction):
     if await check_premium_gate_slash(interaction, "leveling"): return
@@ -2792,7 +2797,7 @@ async def slash_leveling(interaction: discord.Interaction):
     em = dark_red_embed("⚙️ Setup Leveling", f"**Status:** {status}\n\nPake button untuk setup!")
     await interaction.response.send_message(embed=em, view=LevelingSetupView(interaction.guild.id))
 
-@tree.command(name="reactionrole", description="Setup reaction role dengan button")
+@tree.command(name="reactionrole", description="Setup reaction role dengan button | 👑 Bisa dikunci Premium")
 @app_commands.describe(judul="Judul embed", deskripsi="Deskripsi", role1="Role pertama", emoji1="Emoji 1", label1="Label 1", role2="Role kedua", emoji2="Emoji 2", label2="Label 2")
 @app_commands.default_permissions(administrator=True)
 async def slash_reactionrole(interaction: discord.Interaction, judul: str, deskripsi: str, role1: discord.Role, emoji1: str = "🎭", label1: str = "Ambil Role", role2: discord.Role = None, emoji2: str = "🎭", label2: str = "Ambil Role 2"):
@@ -2804,7 +2809,7 @@ async def slash_reactionrole(interaction: discord.Interaction, judul: str, deskr
     view = ReactionRoleView(roles_config)
     await interaction.response.send_message(embed=em, view=view)
 
-@tree.command(name="giveaway", description="Mulai giveaway!")
+@tree.command(name="giveaway", description="Mulai giveaway! | 👑 Bisa dikunci Premium")
 @app_commands.describe(durasi_menit="Durasi dalam menit", hadiah="Hadiah giveaway")
 @app_commands.default_permissions(administrator=True)
 async def slash_giveaway(interaction: discord.Interaction, durasi_menit: int, hadiah: str):
@@ -3064,7 +3069,7 @@ async def slash_event(
         reply_text += "\n⚠️ Format jam tidak valid (gunakan HH:MM), auto-announce dinonaktifkan."
     await interaction.response.send_message(reply_text, ephemeral=True)
 
-@tree.command(name="tebak", description="Main tebak-tebakan!")
+@tree.command(name="tebak", description="Main tebak-tebakan! | 👑 Bisa dikunci Premium")
 async def slash_tebak(interaction: discord.Interaction):
     if await check_premium_gate_slash(interaction, "tebak"): return
     gid = str(interaction.guild.id)
@@ -3086,12 +3091,13 @@ async def slash_addtebak(interaction: discord.Interaction, soal: str, jawaban: s
     save_custom_tebakan(custom)
     await interaction.response.send_message(embed=dark_red_embed("✅ Soal Ditambah!", f"**{soal}** → {jawaban} ({reward} koin)\nTotal: **{len(custom)}**"), ephemeral=True)
 
-@tree.command(name="coins", description="Cek koin lo")
+@tree.command(name="coins", description="Cek koin lo | 👑 Bisa dikunci Premium")
 async def slash_coins(interaction: discord.Interaction):
+    if await check_premium_gate_slash(interaction, "coins"): return
     udata = get_user_fishing(str(interaction.user.id))
     await interaction.response.send_message(embed=dark_red_embed("🪙 Koin Lo", f"**{interaction.user.display_name}** punya **{udata['coins']} koin** 🪙"), ephemeral=True)
 
-@tree.command(name="leaderboard", description="Lihat leaderboard level")
+@tree.command(name="leaderboard", description="Lihat leaderboard level | 👑 Bisa dikunci Premium")
 async def slash_leaderboard(interaction: discord.Interaction):
     if await check_premium_gate_slash(interaction, "leaderboard"): return
     levels      = get_levels()
@@ -3108,6 +3114,62 @@ async def slash_leaderboard(interaction: discord.Interaction):
         medal  = ["🥇", "🥈", "🥉"][i] if i < 3 else f"{i+1}."
         text  += f"{medal} **{name}** — Level {data['level']} ({data['xp']} XP)\n"
     await interaction.response.send_message(embed=dark_red_embed("🏆 Leaderboard Level", text))
+
+@tree.command(name="setlang", description="Change bot language / Ganti bahasa bot | 👑 Bisa dikunci Premium")
+@app_commands.describe(
+    language="Language code: en / de / ar / th / ja (default: en)"
+)
+async def slash_setlang(interaction: discord.Interaction, language: str = None):
+    """Slash version of setlang command."""
+    if await check_premium_gate_slash(interaction, "setlang"): return
+    uid = interaction.user.id
+
+    # Owner selalu id_gaul, tidak bisa diubah
+    if uid == OWNER_ID:
+        em = discord.Embed(
+            title="👑 Language / Bahasa",
+            description="Sebagai **Owner Bot**, bahasa lo dikunci ke **🇮🇩 Indonesia Gaul** permanen dan tidak bisa diubah.",
+            color=DARK_RED
+        )
+        await interaction.response.send_message(embed=em, ephemeral=True)
+        return
+
+    valid_codes  = [c for c in SUPPORTED_LANGS if c != "id_gaul"]
+    options_text = "\n".join([f"• `{code}` — {name}" for code, name in SUPPORTED_LANGS.items() if code != "id_gaul"])
+
+    if not language:
+        current_lang = get_user_lang(uid)
+        current_name = SUPPORTED_LANGS.get(current_lang, current_lang)
+        em = discord.Embed(
+            title=t("setlang_title", uid),
+            description=t("setlang_current", uid,
+                lang=current_name,
+                options=options_text
+            ),
+            color=DARK_RED
+        )
+        await interaction.response.send_message(embed=em, ephemeral=True)
+        return
+
+    code = language.lower().strip()
+    if code not in valid_codes:
+        opts = ", ".join([f"`{c}`" for c in valid_codes])
+        em = discord.Embed(
+            title="❌ Invalid Language",
+            description=t("setlang_invalid", uid, options=opts),
+            color=0xFF4444
+        )
+        await interaction.response.send_message(embed=em, ephemeral=True)
+        return
+
+    set_user_lang(uid, code)
+    lang_name = SUPPORTED_LANGS[code]
+    em = discord.Embed(
+        title=t("setlang_title", uid),
+        description=t("setlang_changed", uid, lang=lang_name),
+        color=0x00FF88
+    )
+    await interaction.response.send_message(embed=em, ephemeral=True)
 
 # ===================== VOTE TOP.GG COMMANDS =====================
 
