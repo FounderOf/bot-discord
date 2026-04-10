@@ -29,22 +29,6 @@ except ImportError:
     FLASK_AVAILABLE = False
     print("⚠️  Flask tidak terinstall. Jalankan: pip install flask")
 
-# Top.gg vote system
-try:
-    import topgg
-    TOPGG_AVAILABLE = True
-except ImportError:
-    TOPGG_AVAILABLE = False
-    print("⚠️  topggpy tidak terinstall. Jalankan: pip install topggpy")
-
-# Webhook server (Flask)
-try:
-    from flask import Flask, request as flask_request, abort
-    FLASK_AVAILABLE = True
-except ImportError:
-    FLASK_AVAILABLE = False
-    print("⚠️  Flask tidak terinstall. Jalankan: pip install flask")
-
 # Timezone WIB (UTC+7)
 WIB = zoneinfo.ZoneInfo("Asia/Jakarta")
 
@@ -764,6 +748,42 @@ def set_locked_commands(cmds: list):
     pdata = get_premium_data()
     pdata["locked_commands"] = cmds
     save_premium_data(pdata)
+    # Schedule re-sync slash commands agar deskripsi premium terupdate
+    asyncio.get_event_loop().create_task(_resync_slash_descriptions())
+
+async def _resync_slash_descriptions():
+    """
+    Update deskripsi slash command yang bisa dikunci premium,
+    lalu re-sync tree ke Discord agar label 👑 Premium muncul/hilang secara otomatis.
+    Kalau command tidak dikunci, deskripsi dikembalikan ke aslinya (tanpa label apapun).
+    """
+    # Mapping: nama command → deskripsi asli (tanpa suffix apapun)
+    _PREMIUM_COMMANDS_DESC = {
+        "fish":         "Mulai mancing!",
+        "tebak":        "Main tebak-tebakan!",
+        "coins":        "Cek koin lo",
+        "giveaway":     "Mulai giveaway!",
+        "ticket":       "Setup panel ticket",
+        "leveling":     "Setup fitur leveling",
+        "reactionrole": "Setup reaction role dengan button",
+        "leaderboard":  "Lihat leaderboard level",
+        "setlang":      "Change bot language / Ganti bahasa bot",
+    }
+    locked = get_locked_commands()
+    for cmd in tree.get_commands():
+        if cmd.name in _PREMIUM_COMMANDS_DESC:
+            base = _PREMIUM_COMMANDS_DESC[cmd.name]
+            if cmd.name in locked:
+                cmd.description = base + " | 👑 Premium"
+            else:
+                cmd.description = base  # kembalikan ke deskripsi asli
+    try:
+        await tree.sync()
+        print(f"✅ Slash commands re-synced (premium label updated)")
+    except Exception as e:
+        print(f"⚠️ Re-sync slash error: {e}")
+
+
 
 def premium_block_embed(user_id=None) -> discord.Embed:
     """Embed notifikasi command terkunci premium."""
@@ -785,6 +805,7 @@ def premium_block_embed(user_id=None) -> discord.Embed:
         em.set_image(url=qris_url)
     em.set_footer(text="RepublikDooms Premium System")
     return em
+
 
 async def check_premium_gate(ctx, command_name: str) -> bool:
     """
@@ -1749,7 +1770,8 @@ class PremiumSetupView(discord.ui.View):
         available = [
             "fish", "tebak", "coins", "giveaway", "event",
             "warn", "sticky", "autoresponse",
-            "ticket", "leveling", "reactionrole", "leaderboard"
+            "ticket", "leveling", "reactionrole", "leaderboard",
+            "setlang"
         ]
         avail_text = ", ".join([f"`{c}`" for c in available])
 
@@ -1796,7 +1818,6 @@ class PremiumSetupView(discord.ui.View):
             description=(
                 "**Command yang memerlukan premium:**\n"
                 + (", ".join([f"`{c}`" for c in locked]) if locked else "*(Tidak ada command yang dikunci)*")
-                + f"\n\n**💳 Info Pembayaran:**\n{payment_info}"
                 + f"\n\n**💳 Info Pembayaran:**\n{payment_info}"
             ),
         )
@@ -2749,7 +2770,6 @@ async def help_cmd(ctx):
     em.add_field(name="📢 Utility",   value="`embed` `setmainchannel` `sticky` `autoresponse` `giveaway` `event` `addemoji`", inline=False)
     em.add_field(name="👑 Premium",   value="`premium` — Lihat info & order premium",                  inline=False)
     em.add_field(name="🗳️ Vote",      value="`vote` — Link vote Top.gg | `claimvote` — Claim reward vote", inline=False)
-    em.add_field(name="🌐 Bahasa",    value="`setlang [kode]` — Ganti bahasa (en/de/ar/th/ja)", inline=False)
     em.add_field(name="🌐 Bahasa",    value="`setlang [kode]` — Ganti bahasa bot (en/de/ar/th/ja)", inline=False)
     em.set_footer(text="Prefix: !Doom | Semua command bisa pake slash juga!")
     await ctx.reply(embed=em)
@@ -2762,7 +2782,7 @@ async def slash_ping(interaction: discord.Interaction):
     em = dark_red_embed("🏓 Pong!", f"**Latency:** `{latency}ms`\n**Status:** {'🟢 Lancar' if latency < 100 else '🟡 Agak lambat' if latency < 200 else '🔴 Lambat'}")
     await interaction.response.send_message(embed=em)
 
-@tree.command(name="fish", description="Mulai mancing! | 👑 Bisa dikunci Premium")
+@tree.command(name="fish", description="Mulai mancing!")
 async def slash_fish(interaction: discord.Interaction):
     maint = get_maintenance()
     if maint.get("active") and interaction.user.id != OWNER_ID:
@@ -2772,7 +2792,7 @@ async def slash_fish(interaction: discord.Interaction):
     em = dark_red_embed("🎣 Fishing RepublikDooms", f"Halo **{interaction.user.display_name}**! Pilih aksi lo:")
     await interaction.response.send_message(embed=em, view=FishingMainView(interaction.user.id))
 
-@tree.command(name="ticket", description="Setup panel ticket | 👑 Bisa dikunci Premium")
+@tree.command(name="ticket", description="Setup panel ticket")
 @app_commands.describe(judul="Judul embed", deskripsi="Deskripsi panel", button_label="Label button", button_emoji="Emoji button", kategori="ID kategori")
 @app_commands.default_permissions(administrator=True)
 async def slash_ticket(interaction: discord.Interaction, judul: str = "🎫 Support Ticket", deskripsi: str = "Klik button untuk buka ticket!", button_label: str = "Buka Ticket", button_emoji: str = "🎫", kategori: str = None):
@@ -2786,7 +2806,7 @@ async def slash_ticket(interaction: discord.Interaction, judul: str = "🎫 Supp
     td.setdefault("panels", {})[panel_id] = panel_config
     save_tickets(td)
 
-@tree.command(name="leveling", description="Setup fitur leveling | 👑 Bisa dikunci Premium")
+@tree.command(name="leveling", description="Setup fitur leveling")
 @app_commands.default_permissions(administrator=True)
 async def slash_leveling(interaction: discord.Interaction):
     if await check_premium_gate_slash(interaction, "leveling"): return
@@ -2797,7 +2817,7 @@ async def slash_leveling(interaction: discord.Interaction):
     em = dark_red_embed("⚙️ Setup Leveling", f"**Status:** {status}\n\nPake button untuk setup!")
     await interaction.response.send_message(embed=em, view=LevelingSetupView(interaction.guild.id))
 
-@tree.command(name="reactionrole", description="Setup reaction role dengan button | 👑 Bisa dikunci Premium")
+@tree.command(name="reactionrole", description="Setup reaction role dengan button")
 @app_commands.describe(judul="Judul embed", deskripsi="Deskripsi", role1="Role pertama", emoji1="Emoji 1", label1="Label 1", role2="Role kedua", emoji2="Emoji 2", label2="Label 2")
 @app_commands.default_permissions(administrator=True)
 async def slash_reactionrole(interaction: discord.Interaction, judul: str, deskripsi: str, role1: discord.Role, emoji1: str = "🎭", label1: str = "Ambil Role", role2: discord.Role = None, emoji2: str = "🎭", label2: str = "Ambil Role 2"):
@@ -2809,7 +2829,7 @@ async def slash_reactionrole(interaction: discord.Interaction, judul: str, deskr
     view = ReactionRoleView(roles_config)
     await interaction.response.send_message(embed=em, view=view)
 
-@tree.command(name="giveaway", description="Mulai giveaway! | 👑 Bisa dikunci Premium")
+@tree.command(name="giveaway", description="Mulai giveaway!")
 @app_commands.describe(durasi_menit="Durasi dalam menit", hadiah="Hadiah giveaway")
 @app_commands.default_permissions(administrator=True)
 async def slash_giveaway(interaction: discord.Interaction, durasi_menit: int, hadiah: str):
@@ -3069,7 +3089,7 @@ async def slash_event(
         reply_text += "\n⚠️ Format jam tidak valid (gunakan HH:MM), auto-announce dinonaktifkan."
     await interaction.response.send_message(reply_text, ephemeral=True)
 
-@tree.command(name="tebak", description="Main tebak-tebakan! | 👑 Bisa dikunci Premium")
+@tree.command(name="tebak", description="Main tebak-tebakan!")
 async def slash_tebak(interaction: discord.Interaction):
     if await check_premium_gate_slash(interaction, "tebak"): return
     gid = str(interaction.guild.id)
@@ -3091,13 +3111,13 @@ async def slash_addtebak(interaction: discord.Interaction, soal: str, jawaban: s
     save_custom_tebakan(custom)
     await interaction.response.send_message(embed=dark_red_embed("✅ Soal Ditambah!", f"**{soal}** → {jawaban} ({reward} koin)\nTotal: **{len(custom)}**"), ephemeral=True)
 
-@tree.command(name="coins", description="Cek koin lo | 👑 Bisa dikunci Premium")
+@tree.command(name="coins", description="Cek koin lo")
 async def slash_coins(interaction: discord.Interaction):
     if await check_premium_gate_slash(interaction, "coins"): return
     udata = get_user_fishing(str(interaction.user.id))
     await interaction.response.send_message(embed=dark_red_embed("🪙 Koin Lo", f"**{interaction.user.display_name}** punya **{udata['coins']} koin** 🪙"), ephemeral=True)
 
-@tree.command(name="leaderboard", description="Lihat leaderboard level | 👑 Bisa dikunci Premium")
+@tree.command(name="leaderboard", description="Lihat leaderboard level")
 async def slash_leaderboard(interaction: discord.Interaction):
     if await check_premium_gate_slash(interaction, "leaderboard"): return
     levels      = get_levels()
@@ -3115,7 +3135,7 @@ async def slash_leaderboard(interaction: discord.Interaction):
         text  += f"{medal} **{name}** — Level {data['level']} ({data['xp']} XP)\n"
     await interaction.response.send_message(embed=dark_red_embed("🏆 Leaderboard Level", text))
 
-@tree.command(name="setlang", description="Change bot language / Ganti bahasa bot | 👑 Bisa dikunci Premium")
+@tree.command(name="setlang", description="Change bot language / Ganti bahasa bot")
 @app_commands.describe(
     language="Language code: en / de / ar / th / ja (default: en)"
 )
