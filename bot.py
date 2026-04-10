@@ -13,6 +13,38 @@ import hashlib
 import aiohttp
 from pathlib import Path
 
+# Top.gg vote system
+try:
+    import topgg
+    TOPGG_AVAILABLE = True
+except ImportError:
+    TOPGG_AVAILABLE = False
+    print("⚠️  topggpy tidak terinstall. Jalankan: pip install topggpy")
+
+# Webhook server (Flask)
+try:
+    from flask import Flask, request as flask_request, abort
+    FLASK_AVAILABLE = True
+except ImportError:
+    FLASK_AVAILABLE = False
+    print("⚠️  Flask tidak terinstall. Jalankan: pip install flask")
+
+# Top.gg vote system
+try:
+    import topgg
+    TOPGG_AVAILABLE = True
+except ImportError:
+    TOPGG_AVAILABLE = False
+    print("⚠️  topggpy tidak terinstall. Jalankan: pip install topggpy")
+
+# Webhook server (Flask)
+try:
+    from flask import Flask, request as flask_request, abort
+    FLASK_AVAILABLE = True
+except ImportError:
+    FLASK_AVAILABLE = False
+    print("⚠️  Flask tidak terinstall. Jalankan: pip install flask")
+
 # Timezone WIB (UTC+7)
 WIB = zoneinfo.ZoneInfo("Asia/Jakarta")
 
@@ -21,6 +53,21 @@ PREFIX = "!Doom"
 BOT_TOKEN = os.getenv("DISCORD_TOKEN", "YOUR_BOT_TOKEN_HERE")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 DARK_RED = 0x8B0000
+
+# ===================== TOP.GG CONFIG =====================
+TOPGG_TOKEN      = os.getenv("TOPGG_TOKEN", "")
+WEBHOOK_PASSWORD = os.getenv("WEBHOOK_PASSWORD", "")
+PORT             = int(os.getenv("PORT", "8080"))
+BOT_ID           = os.getenv("BOT_ID", "")  # Discord Bot ID untuk Top.gg link
+
+VOTE_REWARD_MIN  = 500
+VOTE_REWARD_MAX  = 1000
+VOTE_COOLDOWN_H  = 12   # jam
+VOTE_BONUS_PCTS  = 20   # % bonus coin dari mancing setelah vote
+VOTE_BONUS_MINS  = 10   # durasi bonus mancing (menit)
+
+# Cache vote webhook in-memory (backup sebelum tulis JSON)
+_vote_cache: set = set()
 
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
@@ -233,8 +280,65 @@ def save_premium_orders(d): save_json("premium_orders.json", d)
 def dark_red_embed(title="", description="", **kwargs):
     return discord.Embed(title=title, description=description, color=DARK_RED, **kwargs)
 
-fishing_cooldowns = {}
-active_tebakan    = {}
+fishing_cooldowns   = {}
+active_tebakan      = {}
+# vote_bonus_cache: {str(user_id): float(expire_timestamp)}
+vote_bonus_cache: dict = {}
+
+# ===================== VOTE HELPERS =====================
+def get_vote_data() -> dict:
+    return load_json("vote.json", {})
+
+def save_vote_data(d: dict):
+    save_json("vote.json", d)
+
+def get_vote_record(user_id: str) -> dict:
+    """Return record vote user. Keys: last_claim, last_vote_webhook."""
+    data = get_vote_data()
+    return data.get(str(user_id), {})
+
+def set_vote_record(user_id: str, record: dict):
+    data = get_vote_data()
+    data[str(user_id)] = record
+    save_vote_data(data)
+
+def is_vote_bonus_active(user_id: str) -> bool:
+    """Cek apakah user sedang dalam periode bonus vote."""
+    uid = str(user_id)
+    exp = vote_bonus_cache.get(uid, 0)
+    return time.time() < exp
+
+def activate_vote_bonus(user_id: str):
+    """Aktifkan bonus mancing +20% selama VOTE_BONUS_MINS menit."""
+    uid = str(user_id)
+    vote_bonus_cache[uid] = time.time() + VOTE_BONUS_MINS * 60
+
+def get_vote_bonus_remaining(user_id: str) -> int:
+    """Return sisa detik bonus. 0 jika tidak aktif."""
+    uid = str(user_id)
+    exp = vote_bonus_cache.get(uid, 0)
+    remaining = exp - time.time()
+    return max(0, int(remaining))
+
+async def check_user_voted_topgg(user_id: int) -> bool:
+    """
+    Cek via Top.gg API apakah user sudah vote.
+    Return True jika sudah vote, False jika belum atau error.
+    """
+    if not TOPGG_TOKEN or not BOT_ID:
+        return False
+    url = f"https://top.gg/api/bots/{BOT_ID}/check?userId={user_id}"
+    headers = {"Authorization": TOPGG_TOKEN}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return bool(data.get("voted", 0))
+    except Exception as e:
+        print(f"Top.gg API error: {e}")
+    # Fallback: cek cache webhook
+    return str(user_id) in _vote_cache
 
 # ===================== MAINTENANCE =====================
 def get_maintenance() -> dict:
@@ -405,6 +509,9 @@ async def on_ready():
         print(f"❌ Sync error: {e}")
     check_giveaways.start()
     check_sticky.start()
+    # Jalankan webhook server Top.gg vote
+    asyncio.create_task(run_flask_webhook())
+    # Jalankan webhook server Top.gg vote
 
 @bot.event
 async def on_message(message):
@@ -749,7 +856,11 @@ class FishingMainView(discord.ui.View):
         udata["bait"] = bait_list
 
         caught, rarity = do_fish_roll(udata.get("rod", "Pancing Bambu"), used_bait)
-        sell_price = caught.get("sell_price", 0)
+        base_price  = caught.get("sell_price", 0)
+        # Vote bonus: +20% coin selama VOTE_BONUS_MINS menit setelah claim vote
+        vote_active  = is_vote_bonus_active(uid)
+        bonus_coins  = int(base_price * VOTE_BONUS_PCTS / 100) if vote_active else 0
+        sell_price   = base_price + bonus_coins
         udata["coins"]       += sell_price
         udata["total_catch"] += 1
         udata["inventory"].append(caught["name"])
@@ -757,6 +868,12 @@ class FishingMainView(discord.ui.View):
 
         rarity_label, embed_color = RARITY_DISPLAY.get(rarity, ("⚪ Common", DARK_RED))
         luck_pct = caught.get("luck", 0)
+
+        # Info bonus vote
+        bonus_txt = ""
+        if vote_active:
+            sisa_mnt = get_vote_bonus_remaining(uid) // 60
+            bonus_txt = f"\n🗳️ **Vote Bonus aktif! +{VOTE_BONUS_PCTS}% koin** (sisa ~{sisa_mnt} mnt)"
 
         # Embed berbeda untuk rarity tinggi
         if rarity in ("legendary", "rare"):
@@ -766,9 +883,12 @@ class FishingMainView(discord.ui.View):
                     f"**{interaction.user.display_name}** dapet ikan **LANGKA** bro!\n\n"
                     f"{caught['emoji']} **{caught['name']}**\n"
                     f"🍀 Luck: **{luck_pct}%**\n"
-                    f"💰 Harga jual: **+{sell_price} koin** (Total: {udata['coins']})\n"
+                    f"💰 Harga jual: **+{sell_price} koin**"
+                    + (f" (+{bonus_coins} bonus vote)" if bonus_coins else "")
+                    + f" (Total: {udata['coins']})\n"
                     f"🎣 Rod: **{udata['rod']}**\n"
                     + (f"🪱 Umpan: {used_bait}" if used_bait else "⚠️ Tanpa umpan")
+                    + bonus_txt
                 ),
                 color=embed_color
             )
@@ -780,9 +900,12 @@ class FishingMainView(discord.ui.View):
                 description=(
                     f"**{interaction.user.display_name}** dapet **{caught['name']}** [{rarity_label}]\n"
                     f"🍀 Luck: {luck_pct}%\n"
-                    f"💰 +{sell_price} koin (Total: {udata['coins']})\n"
+                    f"💰 +{sell_price} koin"
+                    + (f" (+{bonus_coins} bonus vote)" if bonus_coins else "")
+                    + f" (Total: {udata['coins']})\n"
                     f"🎣 Rod: {udata['rod']}\n"
                     + (f"🪱 Umpan: {used_bait}" if used_bait else "⚠️ Tanpa umpan")
+                    + bonus_txt
                 ),
                 color=embed_color
             )
@@ -2207,6 +2330,8 @@ async def help_cmd(ctx):
     em.add_field(name="🎭 Role",      value="`addrole` `removerole`",                                  inline=True)
     em.add_field(name="📢 Utility",   value="`embed` `setmainchannel` `sticky` `autoresponse` `giveaway` `event` `addemoji`", inline=False)
     em.add_field(name="👑 Premium",   value="`premium` — Lihat info & order premium",                  inline=False)
+    em.add_field(name="🗳️ Vote",      value="`vote` — Link vote Top.gg | `claimvote` — Claim reward vote", inline=False)
+    em.add_field(name="🗳️ Vote",      value="`vote` — Link vote Top.gg | `claimvote` — Claim reward vote", inline=False)
     em.add_field(name="🎰 Slash",     value="`/ticket` `/leveling` `/reactionrole` `/ping` `/fish` dan banyak lagi!", inline=False)
     em.set_footer(text="Prefix: !Doom | Semua command bisa pake slash juga!")
     await ctx.reply(embed=em)
@@ -2570,6 +2695,186 @@ async def slash_leaderboard(interaction: discord.Interaction):
         medal  = ["🥇", "🥈", "🥉"][i] if i < 3 else f"{i+1}."
         text  += f"{medal} **{name}** — Level {data['level']} ({data['xp']} XP)\n"
     await interaction.response.send_message(embed=dark_red_embed("🏆 Leaderboard Level", text))
+
+# ===================== VOTE TOP.GG COMMANDS =====================
+
+@bot.command(name="vote")
+async def vote_cmd(ctx):
+    """Kirim link vote bot di Top.gg."""
+    if await check_maintenance(ctx):
+        return
+    bot_id_str = BOT_ID or str(bot.user.id)
+    vote_url   = f"https://top.gg/bot/{bot_id_str}/vote"
+    em = discord.Embed(
+        title="🗳️ Vote Bot di Top.gg!",
+        description=(
+            f"**Support bot ini dengan vote di Top.gg!** 🔥\n\n"
+            f"🔗 **[Klik di sini untuk Vote]({vote_url})**\n\n"
+            f"**🎁 Reward Vote:**\n"
+            f"• **{VOTE_REWARD_MIN} - {VOTE_REWARD_MAX} koin** langsung ke saldo lo!\n"
+            f"• **+{VOTE_BONUS_PCTS}% bonus coin mancing** selama **{VOTE_BONUS_MINS} menit**!\n\n"
+            f"**⏰ Cooldown Claim:** {VOTE_COOLDOWN_H} jam\n\n"
+            f"Setelah vote, ketik `!Doom claimvote` untuk ambil reward! 🚀"
+        ),
+        color=DARK_RED
+    )
+    em.set_footer(text="RepublikDooms | Vote every 12 hours!")
+    em.set_thumbnail(url=bot.user.display_avatar.url)
+    await ctx.reply(embed=em)
+
+@bot.command(name="claimvote", aliases=["claimvote", "voteclaim"])
+async def claimvote_cmd(ctx):
+    """Claim reward setelah vote di Top.gg."""
+    if await check_maintenance(ctx):
+        return
+    uid = str(ctx.author.id)
+
+    # Cek cooldown claim
+    record      = get_vote_record(uid)
+    last_claim  = record.get("last_claim", 0)
+    cooldown_s  = VOTE_COOLDOWN_H * 3600
+    elapsed     = time.time() - last_claim
+    if elapsed < cooldown_s:
+        sisa_s   = int(cooldown_s - elapsed)
+        sisa_h   = sisa_s // 3600
+        sisa_m   = (sisa_s % 3600) // 60
+        next_dt  = datetime.datetime.fromtimestamp(last_claim + cooldown_s, tz=WIB)
+        em = discord.Embed(
+            title="⏰ Cooldown Claim Vote",
+            description=(
+                f"Lo udah claim vote sebelumnya bro!\n\n"
+                f"**Bisa claim lagi:** {next_dt.strftime('%d/%m/%Y %H:%M')} WIB\n"
+                f"**Sisa waktu:** {sisa_h} jam {sisa_m} menit\n\n"
+                f"Sabar dulu ya, reward lo udah aman! 🙏"
+            ),
+            color=DARK_RED
+        )
+        await ctx.reply(embed=em)
+        return
+
+    # Cek apakah user sudah vote via Top.gg API atau cache webhook
+    async with ctx.typing():
+        voted = await check_user_voted_topgg(ctx.author.id)
+
+    if not voted:
+        bot_id_str = BOT_ID or str(bot.user.id)
+        vote_url   = f"https://top.gg/bot/{bot_id_str}/vote"
+        em = discord.Embed(
+            title="❌ Belum Vote Bro!",
+            description=(
+                f"Lo belum vote bot ini di Top.gg!\n\n"
+                f"🔗 **[Vote Sekarang di sini]({vote_url})**\n\n"
+                f"Setelah vote, tunggu beberapa detik terus ketik `!Doom claimvote` lagi ya!"
+            ),
+            color=0xFF4444
+        )
+        em.set_footer(text="Vote dulu bro baru bisa claim reward!")
+        await ctx.reply(embed=em)
+        return
+
+    # Berikan reward
+    reward = random.randint(VOTE_REWARD_MIN, VOTE_REWARD_MAX)
+    udata  = get_user_fishing(uid)
+    udata["coins"] += reward
+    save_user_fishing(uid, udata)
+
+    # Aktifkan vote bonus fishing
+    activate_vote_bonus(uid)
+    bonus_until = datetime.datetime.fromtimestamp(
+        vote_bonus_cache.get(uid, time.time()), tz=WIB
+    ).strftime("%H:%M")
+
+    # Update record
+    record["last_claim"] = time.time()
+    record["total_claimed"] = record.get("total_claimed", 0) + 1
+    set_vote_record(uid, record)
+
+    # Hapus dari cache webhook supaya tidak double claim
+    _vote_cache.discard(uid)
+
+    em = discord.Embed(
+        title="🎉 REWARD VOTE DIKLAIM!",
+        description=(
+            f"Makasih udah vote bot ini **{ctx.author.display_name}**! 🔥\n\n"
+            f"**💰 Koin Didapat:** +**{reward} koin**!\n"
+            f"**🪙 Total Koin:** {udata['coins']} koin\n\n"
+            f"**🎣 Vote Bonus Fishing Aktif!**\n"
+            f"+**{VOTE_BONUS_PCTS}% coin** dari mancing selama **{VOTE_BONUS_MINS} menit**\n"
+            f"(Aktif sampai jam **{bonus_until} WIB**) 🚀\n\n"
+            f"**Total Vote Lo:** {record['total_claimed']} kali 🏆\n\n"
+            f"Bisa claim lagi dalam **{VOTE_COOLDOWN_H} jam**!"
+        ),
+        color=0x00FF88
+    )
+    em.set_thumbnail(url=ctx.author.display_avatar.url)
+    em.set_footer(text="RepublikDooms | Thanks for voting! 🗳️")
+    await ctx.reply(embed=em)
+
+# ===================== TOP.GG WEBHOOK SERVER (Flask) =====================
+
+def create_vote_webhook_app():
+    """Buat Flask app untuk menerima webhook vote dari Top.gg."""
+    if not FLASK_AVAILABLE:
+        return None
+
+    app = Flask(__name__)
+
+    @app.route("/dblwebhook", methods=["POST"])
+    def dbl_webhook():
+        # Validasi password webhook
+        auth = flask_request.headers.get("Authorization", "")
+        if WEBHOOK_PASSWORD and auth != WEBHOOK_PASSWORD:
+            abort(401)
+
+        data = flask_request.get_json(silent=True)
+        if not data:
+            abort(400)
+
+        user_id = str(data.get("user", ""))
+        bot_id  = str(data.get("bot", ""))
+        vote_type = data.get("type", "upvote")  # "upvote" atau "test"
+
+        if user_id:
+            # Simpan ke cache dan JSON
+            _vote_cache.add(user_id)
+            vote_data = get_vote_data()
+            if user_id not in vote_data:
+                vote_data[user_id] = {}
+            vote_data[user_id]["last_vote_webhook"] = time.time()
+            vote_data[user_id]["vote_type"] = vote_type
+            save_vote_data(vote_data)
+            print(f"✅ Vote webhook diterima: user {user_id} | type: {vote_type}")
+
+        return "OK", 200
+
+    @app.route("/health", methods=["GET"])
+    def health():
+        return {"status": "ok", "bot": str(bot.user) if bot.user else "starting"}, 200
+
+    return app
+
+async def run_flask_webhook():
+    """Jalankan Flask webhook server di thread terpisah."""
+    if not FLASK_AVAILABLE:
+        print("⚠️  Flask tidak tersedia, webhook server tidak dijalankan.")
+        return
+    if not WEBHOOK_PASSWORD:
+        print("⚠️  WEBHOOK_PASSWORD belum diset, webhook server tidak dijalankan.")
+        return
+
+    app = create_vote_webhook_app()
+    if not app:
+        return
+
+    import threading
+
+    def run_app():
+        # Gunakan threaded=False agar tidak konflik dengan asyncio
+        app.run(host="0.0.0.0", port=PORT, threaded=True, use_reloader=False)
+
+    thread = threading.Thread(target=run_app, daemon=True)
+    thread.start()
+    print(f"✅ Vote webhook server berjalan di port {PORT} → /dblwebhook")
 
 # ===================== ERROR HANDLERS =====================
 @bot.event
