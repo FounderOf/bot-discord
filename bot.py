@@ -280,6 +280,360 @@ def save_premium_orders(d): save_json("premium_orders.json", d)
 def dark_red_embed(title="", description="", **kwargs):
     return discord.Embed(title=title, description=description, color=DARK_RED, **kwargs)
 
+
+# ===================== LANGUAGE SYSTEM =====================
+# Bahasa: id_gaul (default owner), en, de, ar, th, ja
+
+SUPPORTED_LANGS = {
+    "id_gaul": "🇮🇩 Indonesia Gaul",
+    "en":      "🇬🇧 English",
+    "de":      "🇩🇪 Deutsch",
+    "ar":      "🇸🇦 العربية",
+    "th":      "🇹🇭 ภาษาไทย",
+    "ja":      "🇯🇵 日本語",
+}
+
+# Semua teks bot yang bisa diterjemahkan
+# Key = kode string, Value = dict per bahasa
+TRANSLATIONS: dict = {
+    # ── GENERAL ──────────────────────────────────────────────
+    "pong": {
+        "id_gaul": "🏓 Pong! Latency: `{ms}ms` | Status: {status}",
+        "en":      "🏓 Pong! Latency: `{ms}ms` | Status: {status}",
+        "de":      "🏓 Pong! Latenz: `{ms}ms` | Status: {status}",
+        "ar":      "🏓 بونج! زمن الاستجابة: `{ms}ms` | الحالة: {status}",
+        "th":      "🏓 ปอง! เวลาแฝง: `{ms}ms` | สถานะ: {status}",
+        "ja":      "🏓 ポン！遅延: `{ms}ms` | 状態: {status}",
+    },
+    "status_good": {
+        "id_gaul": "🟢 Lancar",
+        "en":      "🟢 Good",
+        "de":      "🟢 Gut",
+        "ar":      "🟢 جيد",
+        "th":      "🟢 ดี",
+        "ja":      "🟢 良好",
+    },
+    "status_slow": {
+        "id_gaul": "🟡 Agak lambat",
+        "en":      "🟡 Slightly slow",
+        "de":      "🟡 Etwas langsam",
+        "ar":      "🟡 بطيء قليلاً",
+        "th":      "🟡 ช้าเล็กน้อย",
+        "ja":      "🟡 やや遅い",
+    },
+    "status_bad": {
+        "id_gaul": "🔴 Lambat",
+        "en":      "🔴 Slow",
+        "de":      "🔴 Langsam",
+        "ar":      "🔴 بطيء",
+        "th":      "🔴 ช้า",
+        "ja":      "🔴 遅い",
+    },
+    # ── MAINTENANCE ──────────────────────────────────────────
+    "maintenance_title": {
+        "id_gaul": "🔧 Bot Sedang Maintenance",
+        "en":      "🔧 Bot Under Maintenance",
+        "de":      "🔧 Bot in Wartung",
+        "ar":      "🔧 البوت تحت الصيانة",
+        "th":      "🔧 บอตอยู่ระหว่างการบำรุงรักษา",
+        "ja":      "🔧 メンテナンス中",
+    },
+    "maintenance_desc": {
+        "id_gaul": "Bot lagi maintenance bro, sabar ya!\n\n**Alasan:** {reason}",
+        "en":      "The bot is under maintenance, please wait!\n\n**Reason:** {reason}",
+        "de":      "Der Bot wird gewartet, bitte warte!\n\n**Grund:** {reason}",
+        "ar":      "البوت تحت الصيانة، يرجى الانتظار!\n\n**السبب:** {reason}",
+        "th":      "บอตอยู่ระหว่างการบำรุงรักษา โปรดรอ!\n\n**เหตุผล:** {reason}",
+        "ja":      "ボットはメンテナンス中です、お待ちください！\n\n**理由:** {reason}",
+    },
+    # ── PREMIUM GATE ─────────────────────────────────────────
+    "premium_locked_title": {
+        "id_gaul": "👑 Command Ini Khusus Premium!",
+        "en":      "👑 This Command is Premium Only!",
+        "de":      "👑 Dieser Befehl ist nur für Premium!",
+        "ar":      "👑 هذا الأمر للمميزين فقط!",
+        "th":      "👑 คำสั่งนี้สำหรับพรีเมียมเท่านั้น!",
+        "ja":      "👑 このコマンドはプレミアム限定です！",
+    },
+    "premium_locked_desc": {
+        "id_gaul": "Command ini **terkunci** dan hanya bisa digunakan oleh member **Premium** bro!\n\n**📦 Paket Tersedia:**\n{packages}\n\n**💳 Info Pembayaran:**\n```{payment}```\n\nKetik `!Doom premium` untuk order sekarang!\n✨ Upgrade dan nikmatin semua fitur eksklusif!",
+        "en":      "This command is **locked** and only available to **Premium** members!\n\n**📦 Available Packages:**\n{packages}\n\n**💳 Payment Info:**\n```{payment}```\n\nType `!Doom premium` to order now!\n✨ Upgrade and enjoy all exclusive features!",
+        "de":      "Dieser Befehl ist **gesperrt** und nur für **Premium**-Mitglieder verfügbar!\n\n**📦 Verfügbare Pakete:**\n{packages}\n\n**💳 Zahlungsinfo:**\n```{payment}```\n\nTippe `!Doom premium` um jetzt zu bestellen!\n✨ Upgrade und genieße alle exklusiven Funktionen!",
+        "ar":      "هذا الأمر **مقفل** ومتاح فقط للأعضاء **المميزين**!\n\n**📦 الباقات المتاحة:**\n{packages}\n\n**💳 معلومات الدفع:**\n```{payment}```\n\nاكتب `!Doom premium` للطلب الآن!\n✨ قم بالترقية واستمتع بجميع الميزات الحصرية!",
+        "th":      "คำสั่งนี้**ถูกล็อค**และใช้ได้เฉพาะสมาชิก**พรีเมียม**เท่านั้น!\n\n**📦 แพ็คเกจที่มี:**\n{packages}\n\n**💳 ข้อมูลการชำระเงิน:**\n```{payment}```\n\nพิมพ์ `!Doom premium` เพื่อสั่งซื้อตอนนี้!\n✨ อัปเกรดและเพลิดเพลินกับฟีเจอร์พิเศษทั้งหมด!",
+        "ja":      "このコマンドは**ロック**されており、**プレミアム**メンバーのみ利用可能です！\n\n**📦 利用可能なパッケージ:**\n{packages}\n\n**💳 支払い情報:**\n```{payment}```\n\n`!Doom premium` と入力して今すぐ注文！\n✨ アップグレードして限定機能をお楽しみください！",
+    },
+    # ── FISHING ──────────────────────────────────────────────
+    "fish_title_rare": {
+        "id_gaul": "{star} {rarity} CATCH!",
+        "en":      "{star} {rarity} CATCH!",
+        "de":      "{star} {rarity} FANG!",
+        "ar":      "{star} صيد {rarity}!",
+        "th":      "{star} จับได้ {rarity}!",
+        "ja":      "{star} {rarity} ゲット！",
+    },
+    "fish_desc_rare": {
+        "id_gaul": "**{name}** dapet ikan **LANGKA** bro!\n\n{emoji} **{fish}**\n🍀 Luck: **{luck}%**\n💰 Harga jual: **+{coins} koin**{bonus_txt} (Total: {total})\n🎣 Rod: **{rod}**\n{bait_txt}",
+        "en":      "**{name}** caught a **RARE** fish!\n\n{emoji} **{fish}**\n🍀 Luck: **{luck}%**\n💰 Sell price: **+{coins} coins**{bonus_txt} (Total: {total})\n🎣 Rod: **{rod}**\n{bait_txt}",
+        "de":      "**{name}** hat einen **SELTENEN** Fisch gefangen!\n\n{emoji} **{fish}**\n🍀 Glück: **{luck}%**\n💰 Verkaufspreis: **+{coins} Münzen**{bonus_txt} (Gesamt: {total})\n🎣 Angel: **{rod}**\n{bait_txt}",
+        "ar":      "**{name}** اصطاد سمكة **نادرة**!\n\n{emoji} **{fish}**\n🍀 الحظ: **{luck}%**\n💰 سعر البيع: **+{coins} عملة**{bonus_txt} (المجموع: {total})\n🎣 السنارة: **{rod}**\n{bait_txt}",
+        "th":      "**{name}** จับปลา**หายาก**ได้!\n\n{emoji} **{fish}**\n🍀 โชค: **{luck}%**\n💰 ราคาขาย: **+{coins} เหรียญ**{bonus_txt} (รวม: {total})\n🎣 เบ็ด: **{rod}**\n{bait_txt}",
+        "ja":      "**{name}** がレアな魚をゲット！\n\n{emoji} **{fish}**\n🍀 ラック: **{luck}%**\n💰 売値: **+{coins} コイン**{bonus_txt} (合計: {total})\n🎣 ロッド: **{rod}**\n{bait_txt}",
+    },
+    "fish_title_normal": {
+        "id_gaul": "{emoji} Hasil Mancing",
+        "en":      "{emoji} Fishing Result",
+        "de":      "{emoji} Fangergebnis",
+        "ar":      "{emoji} نتيجة الصيد",
+        "th":      "{emoji} ผลการตกปลา",
+        "ja":      "{emoji} 釣り結果",
+    },
+    "fish_desc_normal": {
+        "id_gaul": "**{name}** dapet **{fish}** [{rarity}]\n🍀 Luck: {luck}%\n💰 +{coins} koin{bonus_txt} (Total: {total})\n🎣 Rod: {rod}\n{bait_txt}",
+        "en":      "**{name}** caught **{fish}** [{rarity}]\n🍀 Luck: {luck}%\n💰 +{coins} coins{bonus_txt} (Total: {total})\n🎣 Rod: {rod}\n{bait_txt}",
+        "de":      "**{name}** hat **{fish}** gefangen [{rarity}]\n🍀 Glück: {luck}%\n💰 +{coins} Münzen{bonus_txt} (Gesamt: {total})\n🎣 Angel: {rod}\n{bait_txt}",
+        "ar":      "**{name}** اصطاد **{fish}** [{rarity}]\n🍀 الحظ: {luck}%\n💰 +{coins} عملة{bonus_txt} (المجموع: {total})\n🎣 السنارة: {rod}\n{bait_txt}",
+        "th":      "**{name}** จับ **{fish}** [{rarity}]\n🍀 โชค: {luck}%\n💰 +{coins} เหรียญ{bonus_txt} (รวม: {total})\n🎣 เบ็ด: {rod}\n{bait_txt}",
+        "ja":      "**{name}** が **{fish}** を釣った [{rarity}]\n🍀 ラック: {luck}%\n💰 +{coins} コイン{bonus_txt} (合計: {total})\n🎣 ロッド: {rod}\n{bait_txt}",
+    },
+    "fish_vote_bonus": {
+        "id_gaul": "\n🗳️ **Vote Bonus aktif! +{pct}% koin** (sisa ~{mins} mnt)",
+        "en":      "\n🗳️ **Vote Bonus active! +{pct}% coins** (~{mins} min left)",
+        "de":      "\n🗳️ **Vote-Bonus aktiv! +{pct}% Münzen** (~{mins} Min übrig)",
+        "ar":      "\n🗳️ **مكافأة التصويت نشطة! +{pct}% عملة** (~{mins} دقيقة متبقية)",
+        "th":      "\n🗳️ **โบนัสโหวตใช้งานอยู่! +{pct}% เหรียญ** (~{mins} นาทีที่เหลือ)",
+        "ja":      "\n🗳️ **投票ボーナス有効！ +{pct}% コイン** (残り約{mins}分)",
+    },
+    "fish_no_bait": {
+        "id_gaul": "⚠️ Tanpa umpan",
+        "en":      "⚠️ No bait used",
+        "de":      "⚠️ Kein Köder verwendet",
+        "ar":      "⚠️ بدون طعم",
+        "th":      "⚠️ ไม่ใช้เหยื่อ",
+        "ja":      "⚠️ えさなし",
+    },
+    "fish_bait": {
+        "id_gaul": "🪱 Umpan: {bait}",
+        "en":      "🪱 Bait: {bait}",
+        "de":      "🪱 Köder: {bait}",
+        "ar":      "🪱 الطعم: {bait}",
+        "th":      "🪱 เหยื่อ: {bait}",
+        "ja":      "🪱 えさ: {bait}",
+    },
+    "fish_cooldown": {
+        "id_gaul": "⏳ Sabar bro! **{secs} detik** lagi.",
+        "en":      "⏳ Wait! **{secs} seconds** more.",
+        "de":      "⏳ Warte! Noch **{secs} Sekunden**.",
+        "ar":      "⏳ انتظر! **{secs} ثانية** أخرى.",
+        "th":      "⏳ รอก่อน! อีก **{secs} วินาที**",
+        "ja":      "⏳ 待って！あと **{secs} 秒** 。",
+    },
+    "fish_rare_footer": {
+        "id_gaul": "🎊 LUAR BIASA! Tangkapan langka!",
+        "en":      "🎊 AMAZING! Rare catch!",
+        "de":      "🎊 FANTASTISCH! Seltener Fang!",
+        "ar":      "🎊 رائع! صيدة نادرة!",
+        "th":      "🎊 น่าทึ่งมาก! จับปลาหายากได้!",
+        "ja":      "🎊 すごい！レアな魚！",
+    },
+    # ── TEBAK ────────────────────────────────────────────────
+    "tebak_title": {
+        "id_gaul": "🧠 TEBAK-TEBAKAN NIH!",
+        "en":      "🧠 RIDDLE TIME!",
+        "de":      "🧠 RÄTSELRUNDE!",
+        "ar":      "🧠 وقت الألغاز!",
+        "th":      "🧠 ทายปัญหา!",
+        "ja":      "🧠 なぞなぞタイム！",
+    },
+    "tebak_desc": {
+        "id_gaul": "**Soal:**\n{question}\n\n💡 Jawab di chat dengan pesan biasa! Reward: **{reward} koin**\n⚠️ Si penanya ga bisa menang ya.",
+        "en":      "**Question:**\n{question}\n\n💡 Answer in chat! Reward: **{reward} coins**\n⚠️ The asker can't win.",
+        "de":      "**Frage:**\n{question}\n\n💡 Antworte im Chat! Belohnung: **{reward} Münzen**\n⚠️ Der Fragesteller kann nicht gewinnen.",
+        "ar":      "**السؤال:**\n{question}\n\n💡 أجب في الدردشة! المكافأة: **{reward} عملة**\n⚠️ السائل لا يمكنه الفوز.",
+        "th":      "**คำถาม:**\n{question}\n\n💡 ตอบในแชท! รางวัล: **{reward} เหรียญ**\n⚠️ ผู้ถามไม่สามารถชนะได้",
+        "ja":      "**問題:**\n{question}\n\n💡 チャットで答えて！ ご褒美: **{reward} コイン**\n⚠️ 出題者は勝てません。",
+    },
+    "tebak_correct_title": {
+        "id_gaul": "🎉 BENERRR!!!",
+        "en":      "🎉 CORRECT!!!",
+        "de":      "🎉 RICHTIG!!!",
+        "ar":      "🎉 صحيح!!!",
+        "th":      "🎉 ถูกต้อง!!!",
+        "ja":      "🎉 正解！！！",
+    },
+    "tebak_correct_desc": {
+        "id_gaul": "{praise}\n\n**{user}** jawab bener!\n💰 Dapet **+{reward} koin** cuy!\n✅ Jawaban: **{answer}**\n🪙 Total koin lo: **{total}**",
+        "en":      "**{user}** answered correctly!\n💰 Got **+{reward} coins**!\n✅ Answer: **{answer}**\n🪙 Total coins: **{total}**",
+        "de":      "**{user}** hat richtig geantwortet!\n💰 **+{reward} Münzen** erhalten!\n✅ Antwort: **{answer}**\n🪙 Gesamt: **{total}**",
+        "ar":      "**{user}** أجاب بشكل صحيح!\n💰 حصل على **+{reward} عملة**!\n✅ الإجابة: **{answer}**\n🪙 الإجمالي: **{total}**",
+        "th":      "**{user}** ตอบถูกต้อง!\n💰 ได้รับ **+{reward} เหรียญ**!\n✅ คำตอบ: **{answer}**\n🪙 รวม: **{total}**",
+        "ja":      "**{user}** が正解！\n💰 **+{reward} コイン** 獲得！\n✅ 答え: **{answer}**\n🪙 合計: **{total}**",
+    },
+    "tebak_still_active": {
+        "id_gaul": "⚠️ Masih ada tebakan yang belum kejawab bro! Jawab dulu yang itu.",
+        "en":      "⚠️ There's still an unanswered riddle! Answer that one first.",
+        "de":      "⚠️ Es gibt noch ein unbeantwortetes Rätsel! Beantworte das zuerst.",
+        "ar":      "⚠️ لا يزال هناك لغز لم تتم الإجابة عليه! أجب على ذلك أولاً.",
+        "th":      "⚠️ ยังมีปริศนาที่ยังไม่ได้ตอบ! ตอบอันนั้นก่อน",
+        "ja":      "⚠️ まだ未回答のなぞなぞがあります！先にそちらを答えてください。",
+    },
+    # ── COINS ────────────────────────────────────────────────
+    "coins_title": {
+        "id_gaul": "🪙 Koin Lo",
+        "en":      "🪙 Your Coins",
+        "de":      "🪙 Deine Münzen",
+        "ar":      "🪙 عملاتك",
+        "th":      "🪙 เหรียญของคุณ",
+        "ja":      "🪙 あなたのコイン",
+    },
+    "coins_desc": {
+        "id_gaul": "**{user}** punya **{amount} koin** 🪙",
+        "en":      "**{user}** has **{amount} coins** 🪙",
+        "de":      "**{user}** hat **{amount} Münzen** 🪙",
+        "ar":      "**{user}** لديه **{amount} عملة** 🪙",
+        "th":      "**{user}** มี **{amount} เหรียญ** 🪙",
+        "ja":      "**{user}** は **{amount} コイン** を持っています 🪙",
+    },
+    # ── VOTE ─────────────────────────────────────────────────
+    "vote_title": {
+        "id_gaul": "🗳️ Vote Bot di Top.gg!",
+        "en":      "🗳️ Vote for the Bot on Top.gg!",
+        "de":      "🗳️ Stimme für den Bot auf Top.gg ab!",
+        "ar":      "🗳️ صوّت للبوت على Top.gg!",
+        "th":      "🗳️ โหวตบอทบน Top.gg!",
+        "ja":      "🗳️ Top.gg でボットに投票！",
+    },
+    "vote_desc": {
+        "id_gaul": "**Support bot ini dengan vote di Top.gg!** 🔥\n\n🔗 **[Klik di sini untuk Vote]({url})**\n\n**🎁 Reward Vote:**\n• **{min} - {max} koin** langsung ke saldo lo!\n• **+{pct}% bonus coin mancing** selama **{mins} menit**!\n\n**⏰ Cooldown Claim:** {cd} jam\n\nSetelah vote, ketik `!Doom claimvote` untuk ambil reward! 🚀",
+        "en":      "**Support this bot by voting on Top.gg!** 🔥\n\n🔗 **[Click here to Vote]({url})**\n\n**🎁 Vote Rewards:**\n• **{min} - {max} coins** directly to your balance!\n• **+{pct}% fishing coin bonus** for **{mins} minutes**!\n\n**⏰ Claim Cooldown:** {cd} hours\n\nAfter voting, type `!Doom claimvote` to claim your reward! 🚀",
+        "de":      "**Unterstütze diesen Bot durch Abstimmen auf Top.gg!** 🔥\n\n🔗 **[Hier klicken zum Abstimmen]({url})**\n\n**🎁 Abstimmungsbelohnungen:**\n• **{min} - {max} Münzen** direkt auf dein Konto!\n• **+{pct}% Angel-Münzen-Bonus** für **{mins} Minuten**!\n\n**⏰ Claim-Abklingzeit:** {cd} Stunden\n\nNach dem Abstimmen tippe `!Doom claimvote` um deine Belohnung zu erhalten! 🚀",
+        "ar":      "**ادعم هذا البوت بالتصويت على Top.gg!** 🔥\n\n🔗 **[انقر هنا للتصويت]({url})**\n\n**🎁 مكافآت التصويت:**\n• **{min} - {max} عملة** مباشرة إلى رصيدك!\n• **+{pct}% مكافأة عملة الصيد** لمدة **{mins} دقيقة**!\n\n**⏰ مهلة المطالبة:** {cd} ساعات\n\nبعد التصويت، اكتب `!Doom claimvote` للمطالبة بمكافأتك! 🚀",
+        "th":      "**สนับสนุนบอทนี้ด้วยการโหวตบน Top.gg!** 🔥\n\n🔗 **[คลิกที่นี่เพื่อโหวต]({url})**\n\n**🎁 รางวัลโหวต:**\n• **{min} - {max} เหรียญ** ตรงไปยังยอดเงินของคุณ!\n• **+{pct}% โบนัสเหรียญตกปลา** เป็นเวลา **{mins} นาที**!\n\n**⏰ คูลดาวน์การเคลม:** {cd} ชั่วโมง\n\nหลังจากโหวต พิมพ์ `!Doom claimvote` เพื่อรับรางวัล! 🚀",
+        "ja":      "**Top.gg でボットに投票してサポートしよう！** 🔥\n\n🔗 **[こちらをクリックして投票]({url})**\n\n**🎁 投票報酬:**\n• **{min} - {max} コイン** が即座に残高へ！\n• **+{pct}% 釣りコインボーナス** が **{mins} 分間** 有効！\n\n**⏰ クレームクールダウン:** {cd} 時間\n\n投票後、`!Doom claimvote` と入力して報酬を受け取ろう！ 🚀",
+    },
+    "vote_not_voted_title": {
+        "id_gaul": "❌ Belum Vote Bro!",
+        "en":      "❌ You Haven't Voted Yet!",
+        "de":      "❌ Du hast noch nicht abgestimmt!",
+        "ar":      "❌ لم تصوت بعد!",
+        "th":      "❌ คุณยังไม่ได้โหวต!",
+        "ja":      "❌ まだ投票していません！",
+    },
+    "vote_not_voted_desc": {
+        "id_gaul": "Lo belum vote bot ini di Top.gg!\n\n🔗 **[Vote Sekarang di sini]({url})**\n\nSetelah vote, tunggu beberapa detik terus ketik `!Doom claimvote` lagi ya!",
+        "en":      "You haven't voted for this bot on Top.gg yet!\n\n🔗 **[Vote Now here]({url})**\n\nAfter voting, wait a few seconds then type `!Doom claimvote` again!",
+        "de":      "Du hast noch nicht für diesen Bot auf Top.gg abgestimmt!\n\n🔗 **[Jetzt hier abstimmen]({url})**\n\nNach dem Abstimmen warte ein paar Sekunden und tippe dann `!Doom claimvote` erneut!",
+        "ar":      "لم تصوت لهذا البوت على Top.gg بعد!\n\n🔗 **[صوّت الآن هنا]({url})**\n\nبعد التصويت، انتظر بضع ثوانٍ ثم اكتب `!Doom claimvote` مرة أخرى!",
+        "th":      "คุณยังไม่ได้โหวตบอทนี้บน Top.gg!\n\n🔗 **[โหวตตอนนี้ที่นี่]({url})**\n\nหลังจากโหวตแล้ว รอสักครู่แล้วพิมพ์ `!Doom claimvote` อีกครั้ง!",
+        "ja":      "まだTop.ggでこのボットに投票していません！\n\n🔗 **[今すぐここで投票]({url})**\n\n投票後、数秒待ってから`!Doom claimvote`と入力してください！",
+    },
+    "vote_cooldown_title": {
+        "id_gaul": "⏰ Cooldown Claim Vote",
+        "en":      "⏰ Vote Claim Cooldown",
+        "de":      "⏰ Vote-Claim-Abklingzeit",
+        "ar":      "⏰ مهلة المطالبة بالتصويت",
+        "th":      "⏰ คูลดาวน์การเคลมโหวต",
+        "ja":      "⏰ 投票クレームクールダウン",
+    },
+    "vote_cooldown_desc": {
+        "id_gaul": "Lo udah claim vote sebelumnya bro!\n\n**Bisa claim lagi:** {next_time} WIB\n**Sisa waktu:** {hours} jam {mins} menit\n\nSabar dulu ya, reward lo udah aman! 🙏",
+        "en":      "You've already claimed your vote reward!\n\n**Can claim again:** {next_time}\n**Time remaining:** {hours}h {mins}m\n\nPlease wait, your reward is safe! 🙏",
+        "de":      "Du hast deine Abstimmungsbelohnung bereits beansprucht!\n\n**Kann wieder beansprucht werden:** {next_time}\n**Verbleibende Zeit:** {hours}h {mins}m\n\nBitte warte, deine Belohnung ist sicher! 🙏",
+        "ar":      "لقد طالبت بمكافأة تصويتك بالفعل!\n\n**يمكن المطالبة مرة أخرى:** {next_time}\n**الوقت المتبقي:** {hours} ساعة {mins} دقيقة\n\nيرجى الانتظار، مكافأتك آمنة! 🙏",
+        "th":      "คุณได้รับรางวัลโหวตแล้ว!\n\n**เคลมได้อีกครั้ง:** {next_time}\n**เวลาที่เหลือ:** {hours} ชม {mins} นาที\n\nโปรดรอ รางวัลของคุณปลอดภัย! 🙏",
+        "ja":      "すでに投票報酬を受け取りました！\n\n**次回クレーム可能:** {next_time}\n**残り時間:** {hours}時間{mins}分\n\nお待ちください、報酬は安全です！ 🙏",
+    },
+    "vote_claimed_title": {
+        "id_gaul": "🎉 REWARD VOTE DIKLAIM!",
+        "en":      "🎉 VOTE REWARD CLAIMED!",
+        "de":      "🎉 ABSTIMMUNGSBELOHNUNG ERHALTEN!",
+        "ar":      "🎉 تم الحصول على مكافأة التصويت!",
+        "th":      "🎉 ได้รับรางวัลโหวตแล้ว!",
+        "ja":      "🎉 投票報酬を受け取りました！",
+    },
+    "vote_claimed_desc": {
+        "id_gaul": "Makasih udah vote bot ini **{user}**! 🔥\n\n**💰 Koin Didapat:** +**{reward} koin**!\n**🪙 Total Koin:** {total} koin\n\n**🎣 Vote Bonus Fishing Aktif!**\n+**{pct}% coin** dari mancing selama **{mins} menit**\n(Aktif sampai jam **{until}**) 🚀\n\n**Total Vote Lo:** {count} kali 🏆\n\nBisa claim lagi dalam **{cd} jam**!",
+        "en":      "Thanks for voting **{user}**! 🔥\n\n**💰 Coins Received:** +**{reward} coins**!\n**🪙 Total Coins:** {total} coins\n\n**🎣 Vote Fishing Bonus Active!**\n+**{pct}% coins** from fishing for **{mins} minutes**\n(Active until **{until}**) 🚀\n\n**Your Total Votes:** {count} times 🏆\n\nCan claim again in **{cd} hours**!",
+        "de":      "Danke für deine Stimme **{user}**! 🔥\n\n**💰 Münzen erhalten:** +**{reward} Münzen**!\n**🪙 Gesamt-Münzen:** {total} Münzen\n\n**🎣 Vote-Angel-Bonus aktiv!**\n+**{pct}% Münzen** beim Angeln für **{mins} Minuten**\n(Aktiv bis **{until}**) 🚀\n\n**Deine Gesamtabstimmungen:** {count} Mal 🏆\n\nKann wieder beansprucht werden in **{cd} Stunden**!",
+        "ar":      "شكراً لتصويتك **{user}**! 🔥\n\n**💰 العملات المستلمة:** +**{reward} عملة**!\n**🪙 إجمالي العملات:** {total} عملة\n\n**🎣 مكافأة الصيد بالتصويت نشطة!**\n+**{pct}% عملات** من الصيد لمدة **{mins} دقيقة**\n(نشط حتى **{until}**) 🚀\n\n**إجمالي تصويتاتك:** {count} مرة 🏆\n\nيمكن المطالبة مرة أخرى في **{cd} ساعات**!",
+        "th":      "ขอบคุณที่โหวต **{user}**! 🔥\n\n**💰 เหรียญที่ได้รับ:** +**{reward} เหรียญ**!\n**🪙 เหรียญทั้งหมด:** {total} เหรียญ\n\n**🎣 โบนัสตกปลาจากการโหวตใช้งานอยู่!**\n+**{pct}% เหรียญ** จากการตกปลาเป็นเวลา **{mins} นาที**\n(ใช้งานถึง **{until}**) 🚀\n\n**โหวตทั้งหมดของคุณ:** {count} ครั้ง 🏆\n\nเคลมได้อีกครั้งใน **{cd} ชั่วโมง**!",
+        "ja":      "投票してくれてありがとう **{user}**！ 🔥\n\n**💰 獲得コイン:** +**{reward} コイン**！\n**🪙 合計コイン:** {total} コイン\n\n**🎣 投票釣りボーナス有効！**\n+**{pct}% コイン** が釣りで **{mins} 分間** 有効\n(**{until}** まで) 🚀\n\n**総投票数:** {count} 回 🏆\n\n**{cd} 時間後** に再クレーム可能！",
+    },
+    # ── SETLANG ──────────────────────────────────────────────
+    "setlang_title": {
+        "id_gaul": "🌐 Pengaturan Bahasa",
+        "en":      "🌐 Language Settings",
+        "de":      "🌐 Spracheinstellungen",
+        "ar":      "🌐 إعدادات اللغة",
+        "th":      "🌐 การตั้งค่าภาษา",
+        "ja":      "🌐 言語設定",
+    },
+    "setlang_changed": {
+        "id_gaul": "✅ Bahasa berhasil diubah ke **{lang}**!",
+        "en":      "✅ Language successfully changed to **{lang}**!",
+        "de":      "✅ Sprache erfolgreich auf **{lang}** geändert!",
+        "ar":      "✅ تم تغيير اللغة بنجاح إلى **{lang}**!",
+        "th":      "✅ เปลี่ยนภาษาเป็น **{lang}** สำเร็จ!",
+        "ja":      "✅ 言語を **{lang}** に変更しました！",
+    },
+    "setlang_invalid": {
+        "id_gaul": "❌ Bahasa tidak valid! Pilih: {options}",
+        "en":      "❌ Invalid language! Choose: {options}",
+        "de":      "❌ Ungültige Sprache! Wähle: {options}",
+        "ar":      "❌ لغة غير صالحة! اختر: {options}",
+        "th":      "❌ ภาษาไม่ถูกต้อง! เลือก: {options}",
+        "ja":      "❌ 無効な言語！選択: {options}",
+    },
+    "setlang_current": {
+        "id_gaul": "**Bahasa lo saat ini:** {lang}\n\n**Pilihan bahasa tersedia:**\n{options}\n\nGunakan: `!Doom setlang [kode]`\nContoh: `!Doom setlang en`",
+        "en":      "**Your current language:** {lang}\n\n**Available languages:**\n{options}\n\nUse: `!Doom setlang [code]`\nExample: `!Doom setlang ja`",
+        "de":      "**Deine aktuelle Sprache:** {lang}\n\n**Verfügbare Sprachen:**\n{options}\n\nVerwende: `!Doom setlang [code]`\nBeispiel: `!Doom setlang de`",
+        "ar":      "**لغتك الحالية:** {lang}\n\n**اللغات المتاحة:**\n{options}\n\nاستخدم: `!Doom setlang [code]`\nمثال: `!Doom setlang ar`",
+        "th":      "**ภาษาปัจจุบันของคุณ:** {lang}\n\n**ภาษาที่ใช้ได้:**\n{options}\n\nใช้: `!Doom setlang [code]`\nตัวอย่าง: `!Doom setlang th`",
+        "ja":      "**現在の言語:** {lang}\n\n**利用可能な言語:**\n{options}\n\n使用法: `!Doom setlang [コード]`\n例: `!Doom setlang ja`",
+    },
+}
+
+# ─── Language data helpers ───────────────────────────────────────────────────
+
+def get_lang_data() -> dict:
+    return load_json("lang.json", {})
+
+def save_lang_data(d: dict):
+    save_json("lang.json", d)
+
+def get_user_lang(user_id) -> str:
+    """
+    Return kode bahasa user.
+    Owner → selalu id_gaul.
+    User lain → dari lang.json, default 'en'.
+    """
+    uid = str(user_id)
+    if OWNER_ID and int(uid) == OWNER_ID:
+        return "id_gaul"
+    data = get_lang_data()
+    return data.get(uid, "en")
+
+def set_user_lang(user_id, lang_code: str):
+    data = get_lang_data()
+    data[str(user_id)] = lang_code
+    save_lang_data(data)
+
+def t(key: str, user_id, **kwargs) -> str:
+    """
+    Ambil teks terjemahan berdasarkan key dan user_id.
+    Fallback: en → id_gaul → key itu sendiri.
+    """
+    lang = get_user_lang(user_id)
+    entry = TRANSLATIONS.get(key, {})
+    text  = entry.get(lang) or entry.get("en") or entry.get("id_gaul") or key
+    if kwargs:
+        try:
+            text = text.format(**kwargs)
+        except (KeyError, ValueError):
+            pass
+    return text
+
 fishing_cooldowns   = {}
 active_tebakan      = {}
 # vote_bonus_cache: {str(user_id): float(expire_timestamp)}
@@ -411,21 +765,19 @@ def set_locked_commands(cmds: list):
     pdata["locked_commands"] = cmds
     save_premium_data(pdata)
 
-def premium_block_embed() -> discord.Embed:
+def premium_block_embed(user_id=None) -> discord.Embed:
     """Embed notifikasi command terkunci premium."""
-    pdata        = get_premium_data()
-    pkgs         = get_premium_packages()
-    pkg_text     = "\n".join([f"• **{k}** — {v['price']} | {v['duration_days']} hari" for k, v in pkgs.items()])
-    payment_info = pdata.get("settings", {}).get("payment_info", "Ketik `!Doom premium` untuk info lebih lanjut.")
+    uid      = user_id or 0
+    pdata    = get_premium_data()
+    pkgs     = get_premium_packages()
+    lang     = get_user_lang(uid) if uid else "en"
+    pkg_text = "\n".join([f"• **{k}** — {v['price']} | {v['duration_days']} {'hari' if lang == 'id_gaul' else 'days' if lang == 'en' else 'Tage' if lang == 'de' else 'أيام' if lang == 'ar' else 'วัน' if lang == 'th' else '日'}" for k, v in pkgs.items()])
+    payment_info = pdata.get("settings", {}).get("payment_info", "Type `!Doom premium` for info.")
     qris_url     = pdata.get("settings", {}).get("qris_url", "")
     em = discord.Embed(
-        title="👑 Command Ini Khusus Premium!",
-        description=(
-            "Command ini **terkunci** dan hanya bisa digunakan oleh member **Premium** bro!\n\n"
-            f"**📦 Paket Tersedia:**\n{pkg_text}\n\n"
-            f"**💳 Info Pembayaran:**\n```{payment_info}```\n\n"
-            "Ketik `!Doom premium` untuk order sekarang!\n"
-            "✨ Upgrade dan nikmatin semua fitur eksklusif!"
+        title=t("premium_locked_title", uid),
+        description=t("premium_locked_desc", uid,
+            packages=pkg_text, payment=payment_info
         ),
         color=0xFFD700
     )
@@ -453,7 +805,7 @@ async def check_premium_gate(ctx, command_name: str) -> bool:
         return False  # user premium, lanjut
 
     # Blocked — user belum premium
-    await ctx.reply(embed=premium_block_embed())
+    await ctx.reply(embed=premium_block_embed(ctx.author.id))
     return True
 
 async def check_premium_gate_slash(interaction: discord.Interaction, command_name: str) -> bool:
@@ -472,7 +824,7 @@ async def check_premium_gate_slash(interaction: discord.Interaction, command_nam
     if is_premium(str(interaction.user.id)):
         return False
 
-    await interaction.response.send_message(embed=premium_block_embed(), ephemeral=True)
+    await interaction.response.send_message(embed=premium_block_embed(interaction.user.id), ephemeral=True)
     return True
 
 # ===================== MAINTENANCE CHECK =====================
@@ -483,13 +835,10 @@ async def check_maintenance(ctx) -> bool:
         return False
     if ctx.author.id == OWNER_ID:
         return False  # owner tetap bisa pakai bot
+    uid_m = ctx.author.id
     em = discord.Embed(
-        title="🔧 Bot Sedang Maintenance",
-        description=(
-            f"Bot lagi dalam mode **maintenance** bro, sabar ya!\n\n"
-            f"**Alasan:** {maint.get('reason', 'Tidak disebutkan')}\n"
-            f"Pantau terus info terbaru di server!"
-        ),
+        title=t("maintenance_title", uid_m),
+        description=t("maintenance_desc", uid_m, reason=maint.get("reason", "-")),
         color=0xFF6600
     )
     await ctx.reply(embed=em)
@@ -573,15 +922,18 @@ async def on_message(message):
                 reward = tb["reward"]
                 udata["coins"] += reward
                 save_user_fishing(str(message.author.id), udata)
-                gaul_response = random.choice(JAWABAN_BENAR_GAUL)
-                em = dark_red_embed(
-                    "🎉 BENERRR!!!",
-                    f"{gaul_response}\n\n"
-                    f"**{message.author.display_name}** jawab bener!\n"
-                    f"💰 Dapet **+{reward} koin** cuy!\n"
-                    f"✅ Jawaban: **{tb['jawaban'].title()}**\n"
-                    f"🪙 Total koin lo: **{udata['coins']}**"
-                )
+                uid_w = message.author.id
+                # id_gaul pake praise gaul, bahasa lain tidak
+                if get_user_lang(uid_w) == "id_gaul":
+                    praise = random.choice(JAWABAN_BENAR_GAUL)
+                    desc   = t("tebak_correct_desc", uid_w,
+                                praise=praise, user=message.author.display_name,
+                                reward=reward, answer=tb["jawaban"].title(), total=udata["coins"])
+                else:
+                    desc   = t("tebak_correct_desc", uid_w,
+                                praise="", user=message.author.display_name,
+                                reward=reward, answer=tb["jawaban"].title(), total=udata["coins"])
+                em = dark_red_embed(t("tebak_correct_title", uid_w), desc)
                 em.set_thumbnail(url=message.author.display_avatar.url)
                 await message.channel.send(embed=em)
                 del active_tebakan[guild_id]
@@ -838,7 +1190,8 @@ class FishingMainView(discord.ui.View):
         uid = str(interaction.user.id)
         if uid in fishing_cooldowns and now - fishing_cooldowns[uid] < 10:
             sisa = round(10 - (now - fishing_cooldowns[uid]))
-            await interaction.response.send_message(f"⏳ Sabar bro! **{sisa} detik** lagi.", ephemeral=True)
+            await interaction.response.send_message(
+                t("fish_cooldown", interaction.user.id, secs=sisa), ephemeral=True)
             return
         fishing_cooldowns[uid] = now
         udata = get_user_fishing(uid)
@@ -868,45 +1221,43 @@ class FishingMainView(discord.ui.View):
 
         rarity_label, embed_color = RARITY_DISPLAY.get(rarity, ("⚪ Common", DARK_RED))
         luck_pct = caught.get("luck", 0)
+        uid_fish = interaction.user.id
 
         # Info bonus vote
         bonus_txt = ""
         if vote_active:
             sisa_mnt = get_vote_bonus_remaining(uid) // 60
-            bonus_txt = f"\n🗳️ **Vote Bonus aktif! +{VOTE_BONUS_PCTS}% koin** (sisa ~{sisa_mnt} mnt)"
+            bonus_txt = t("fish_vote_bonus", uid_fish,
+                          pct=VOTE_BONUS_PCTS, mins=sisa_mnt)
 
-        # Embed berbeda untuk rarity tinggi
+        bonus_str = f" (+{bonus_coins} bonus vote)" if bonus_coins else ""
+        bait_txt  = (t("fish_bait", uid_fish, bait=used_bait)
+                     if used_bait else t("fish_no_bait", uid_fish))
+        star      = "🌟" if rarity == "legendary" else "💎"
+
         if rarity in ("legendary", "rare"):
             em = discord.Embed(
-                title=f"{'🌟' if rarity == 'legendary' else '💎'} {rarity_label} CATCH!",
-                description=(
-                    f"**{interaction.user.display_name}** dapet ikan **LANGKA** bro!\n\n"
-                    f"{caught['emoji']} **{caught['name']}**\n"
-                    f"🍀 Luck: **{luck_pct}%**\n"
-                    f"💰 Harga jual: **+{sell_price} koin**"
-                    + (f" (+{bonus_coins} bonus vote)" if bonus_coins else "")
-                    + f" (Total: {udata['coins']})\n"
-                    f"🎣 Rod: **{udata['rod']}**\n"
-                    + (f"🪱 Umpan: {used_bait}" if used_bait else "⚠️ Tanpa umpan")
-                    + bonus_txt
-                ),
+                title=t("fish_title_rare", uid_fish,
+                        star=star, rarity=rarity_label),
+                description=t("fish_desc_rare", uid_fish,
+                    name=interaction.user.display_name, emoji=caught["emoji"],
+                    fish=caught["name"], luck=luck_pct,
+                    coins=sell_price, bonus_txt=bonus_str,
+                    total=udata["coins"], rod=udata["rod"], bait_txt=bait_txt
+                ) + bonus_txt,
                 color=embed_color
             )
             em.set_thumbnail(url=interaction.user.display_avatar.url)
-            em.set_footer(text="🎊 LUAR BIASA! Tangkapan langka!")
+            em.set_footer(text=t("fish_rare_footer", uid_fish))
         else:
             em = discord.Embed(
-                title=f"{caught['emoji']} Hasil Mancing",
-                description=(
-                    f"**{interaction.user.display_name}** dapet **{caught['name']}** [{rarity_label}]\n"
-                    f"🍀 Luck: {luck_pct}%\n"
-                    f"💰 +{sell_price} koin"
-                    + (f" (+{bonus_coins} bonus vote)" if bonus_coins else "")
-                    + f" (Total: {udata['coins']})\n"
-                    f"🎣 Rod: {udata['rod']}\n"
-                    + (f"🪱 Umpan: {used_bait}" if used_bait else "⚠️ Tanpa umpan")
-                    + bonus_txt
-                ),
+                title=t("fish_title_normal", uid_fish, emoji=caught["emoji"]),
+                description=t("fish_desc_normal", uid_fish,
+                    name=interaction.user.display_name, fish=caught["name"],
+                    rarity=rarity_label, luck=luck_pct,
+                    coins=sell_price, bonus_txt=bonus_str,
+                    total=udata["coins"], rod=udata["rod"], bait_txt=bait_txt
+                ) + bonus_txt,
                 color=embed_color
             )
         await interaction.response.edit_message(embed=em, view=self)
@@ -1675,11 +2026,12 @@ async def maintenance_panel(ctx):
 async def ping_cmd(ctx):
     if await check_maintenance(ctx):
         return
+    uid     = ctx.author.id
     latency = round(bot.latency * 1000)
-    em = dark_red_embed(
-        "🏓 Pong!",
-        f"**Latency:** `{latency}ms`\n**Status:** {'🟢 Lancar' if latency < 100 else '🟡 Agak lambat' if latency < 200 else '🔴 Lambat'}"
-    )
+    status  = (t("status_good", uid) if latency < 100
+               else t("status_slow", uid) if latency < 200
+               else t("status_bad", uid))
+    em = dark_red_embed("🏓 Pong!", t("pong", uid, ms=latency, status=status))
     await ctx.reply(embed=em)
 
 @bot.command(name="fish", aliases=["mancing", "fishing"])
@@ -1693,18 +2045,17 @@ async def fishing_cmd(ctx):
 async def tebak_cmd(ctx):
     if await check_maintenance(ctx): return
     if await check_premium_gate(ctx, "tebak"): return
+    uid = ctx.author.id
     gid = str(ctx.guild.id)
     if gid in active_tebakan:
-        await ctx.reply("⚠️ Masih ada tebakan yang belum kejawab bro! Jawab dulu yang itu.")
+        await ctx.reply(t("tebak_still_active", uid))
         return
     semua_soal = TEBAKAN_LIST + get_custom_tebakan()
     soal = random.choice(semua_soal)
-    active_tebakan[gid] = {"jawaban": soal["jawaban"].lower(), "reward": soal["reward"], "asker": ctx.author.id}
+    active_tebakan[gid] = {"jawaban": soal["jawaban"].lower(), "reward": soal["reward"], "asker": uid}
     em = dark_red_embed(
-        "🧠 TEBAK-TEBAKAN NIH!",
-        f"**Soal:**\n{soal['soal']}\n\n"
-        f"💡 Jawab di chat dengan pesan biasa! Reward: **{soal['reward']} koin**\n"
-        f"⚠️ Si penanya ga bisa menang ya."
+        t("tebak_title", uid),
+        t("tebak_desc", uid, question=soal["soal"], reward=soal["reward"])
     )
     await ctx.send(embed=em)
 
@@ -1756,8 +2107,12 @@ async def removetebak_cmd(ctx, nomor: int = None):
 async def check_coins(ctx):
     if await check_maintenance(ctx): return
     if await check_premium_gate(ctx, "coins"): return
-    udata = get_user_fishing(str(ctx.author.id))
-    em = dark_red_embed("🪙 Koin Lo", f"**{ctx.author.display_name}** punya **{udata['coins']} koin** 🪙")
+    uid   = ctx.author.id
+    udata = get_user_fishing(str(uid))
+    em = dark_red_embed(
+        t("coins_title", uid),
+        t("coins_desc", uid, user=ctx.author.display_name, amount=udata["coins"])
+    )
     await ctx.reply(embed=em)
 
 # --- Warn ---
@@ -2318,6 +2673,64 @@ async def premium_user_cmd(ctx):
 
 # ===================== HELP COMMAND =====================
 
+
+# ===================== SETLANG COMMAND =====================
+
+@bot.command(name="setlang", aliases=["language", "lang"])
+async def setlang_cmd(ctx, lang_code: str = None):
+    """Ganti bahasa bot untuk user ini."""
+    if await check_maintenance(ctx):
+        return
+    uid = str(ctx.author.id)
+
+    # Owner tidak bisa ganti bahasa (selalu id_gaul)
+    if ctx.author.id == OWNER_ID:
+        em = discord.Embed(
+            title="👑 Language / Bahasa",
+            description="Sebagai **Owner Bot**, bahasa lo dikunci ke **🇮🇩 Indonesia Gaul** permanen dan tidak bisa diubah.",
+            color=DARK_RED
+        )
+        await ctx.reply(embed=em)
+        return
+
+    options_text = "\n".join([f"• `{code}` — {name}" for code, name in SUPPORTED_LANGS.items() if code != "id_gaul"])
+
+    if not lang_code:
+        current_lang = get_user_lang(uid)
+        current_name = SUPPORTED_LANGS.get(current_lang, current_lang)
+        em = discord.Embed(
+            title=t("setlang_title", uid),
+            description=t("setlang_current", uid,
+                lang=current_name,
+                options=options_text
+            ),
+            color=DARK_RED
+        )
+        await ctx.reply(embed=em)
+        return
+
+    code = lang_code.lower().strip()
+    # id_gaul khusus owner, user biasa tidak bisa pilih ini
+    valid_codes = [c for c in SUPPORTED_LANGS if c != "id_gaul"]
+    if code not in valid_codes:
+        opts = ", ".join([f"`{c}`" for c in valid_codes])
+        em = discord.Embed(
+            title="❌ Invalid Language",
+            description=t("setlang_invalid", uid, options=opts),
+            color=0xFF4444
+        )
+        await ctx.reply(embed=em)
+        return
+
+    set_user_lang(uid, code)
+    lang_name = SUPPORTED_LANGS[code]
+    em = discord.Embed(
+        title=t("setlang_title", uid),
+        description=t("setlang_changed", uid, lang=lang_name),
+        color=0x00FF88
+    )
+    await ctx.reply(embed=em)
+
 @bot.command(name="help", aliases=["h"])
 async def help_cmd(ctx):
     if await check_maintenance(ctx):
@@ -2331,7 +2744,8 @@ async def help_cmd(ctx):
     em.add_field(name="📢 Utility",   value="`embed` `setmainchannel` `sticky` `autoresponse` `giveaway` `event` `addemoji`", inline=False)
     em.add_field(name="👑 Premium",   value="`premium` — Lihat info & order premium",                  inline=False)
     em.add_field(name="🗳️ Vote",      value="`vote` — Link vote Top.gg | `claimvote` — Claim reward vote", inline=False)
-    em.add_field(name="🎰 Slash",     value="`/ticket` `/leveling` `/reactionrole` `/ping` `/fish` dan banyak lagi!", inline=False)
+    em.add_field(name="🌐 Bahasa",    value="`setlang [kode]` — Ganti bahasa (en/de/ar/th/ja)", inline=False)
+    em.add_field(name="🌐 Bahasa",    value="`setlang [kode]` — Ganti bahasa bot (en/de/ar/th/ja)", inline=False)
     em.set_footer(text="Prefix: !Doom | Semua command bisa pake slash juga!")
     await ctx.reply(embed=em)
 
@@ -2702,18 +3116,14 @@ async def vote_cmd(ctx):
     """Kirim link vote bot di Top.gg."""
     if await check_maintenance(ctx):
         return
+    uid        = ctx.author.id
     bot_id_str = BOT_ID or str(bot.user.id)
     vote_url   = f"https://top.gg/bot/{bot_id_str}/vote"
     em = discord.Embed(
-        title="🗳️ Vote Bot di Top.gg!",
-        description=(
-            f"**Support bot ini dengan vote di Top.gg!** 🔥\n\n"
-            f"🔗 **[Klik di sini untuk Vote]({vote_url})**\n\n"
-            f"**🎁 Reward Vote:**\n"
-            f"• **{VOTE_REWARD_MIN} - {VOTE_REWARD_MAX} koin** langsung ke saldo lo!\n"
-            f"• **+{VOTE_BONUS_PCTS}% bonus coin mancing** selama **{VOTE_BONUS_MINS} menit**!\n\n"
-            f"**⏰ Cooldown Claim:** {VOTE_COOLDOWN_H} jam\n\n"
-            f"Setelah vote, ketik `!Doom claimvote` untuk ambil reward! 🚀"
+        title=t("vote_title", uid),
+        description=t("vote_desc", uid,
+            url=vote_url, min=VOTE_REWARD_MIN, max=VOTE_REWARD_MAX,
+            pct=VOTE_BONUS_PCTS, mins=VOTE_BONUS_MINS, cd=VOTE_COOLDOWN_H
         ),
         color=DARK_RED
     )
@@ -2738,13 +3148,12 @@ async def claimvote_cmd(ctx):
         sisa_h   = sisa_s // 3600
         sisa_m   = (sisa_s % 3600) // 60
         next_dt  = datetime.datetime.fromtimestamp(last_claim + cooldown_s, tz=WIB)
+        uid_cv = ctx.author.id
         em = discord.Embed(
-            title="⏰ Cooldown Claim Vote",
-            description=(
-                f"Lo udah claim vote sebelumnya bro!\n\n"
-                f"**Bisa claim lagi:** {next_dt.strftime('%d/%m/%Y %H:%M')} WIB\n"
-                f"**Sisa waktu:** {sisa_h} jam {sisa_m} menit\n\n"
-                f"Sabar dulu ya, reward lo udah aman! 🙏"
+            title=t("vote_cooldown_title", uid_cv),
+            description=t("vote_cooldown_desc", uid_cv,
+                next_time=next_dt.strftime("%d/%m/%Y %H:%M"),
+                hours=sisa_h, mins=sisa_m
             ),
             color=DARK_RED
         )
@@ -2758,16 +3167,13 @@ async def claimvote_cmd(ctx):
     if not voted:
         bot_id_str = BOT_ID or str(bot.user.id)
         vote_url   = f"https://top.gg/bot/{bot_id_str}/vote"
+        uid_nv = ctx.author.id
         em = discord.Embed(
-            title="❌ Belum Vote Bro!",
-            description=(
-                f"Lo belum vote bot ini di Top.gg!\n\n"
-                f"🔗 **[Vote Sekarang di sini]({vote_url})**\n\n"
-                f"Setelah vote, tunggu beberapa detik terus ketik `!Doom claimvote` lagi ya!"
-            ),
+            title=t("vote_not_voted_title", uid_nv),
+            description=t("vote_not_voted_desc", uid_nv, url=vote_url),
             color=0xFF4444
         )
-        em.set_footer(text="Vote dulu bro baru bisa claim reward!")
+        em.set_footer(text="Vote dulu bro baru bisa claim reward!" if get_user_lang(uid_nv) == "id_gaul" else "Vote first to claim reward!")
         await ctx.reply(embed=em)
         return
 
@@ -2791,17 +3197,14 @@ async def claimvote_cmd(ctx):
     # Hapus dari cache webhook supaya tidak double claim
     _vote_cache.discard(uid)
 
+    uid_cl = ctx.author.id
     em = discord.Embed(
-        title="🎉 REWARD VOTE DIKLAIM!",
-        description=(
-            f"Makasih udah vote bot ini **{ctx.author.display_name}**! 🔥\n\n"
-            f"**💰 Koin Didapat:** +**{reward} koin**!\n"
-            f"**🪙 Total Koin:** {udata['coins']} koin\n\n"
-            f"**🎣 Vote Bonus Fishing Aktif!**\n"
-            f"+**{VOTE_BONUS_PCTS}% coin** dari mancing selama **{VOTE_BONUS_MINS} menit**\n"
-            f"(Aktif sampai jam **{bonus_until} WIB**) 🚀\n\n"
-            f"**Total Vote Lo:** {record['total_claimed']} kali 🏆\n\n"
-            f"Bisa claim lagi dalam **{VOTE_COOLDOWN_H} jam**!"
+        title=t("vote_claimed_title", uid_cl),
+        description=t("vote_claimed_desc", uid_cl,
+            user=ctx.author.display_name, reward=reward,
+            total=udata["coins"], pct=VOTE_BONUS_PCTS,
+            mins=VOTE_BONUS_MINS, until=bonus_until,
+            count=record["total_claimed"], cd=VOTE_COOLDOWN_H
         ),
         color=0x00FF88
     )
