@@ -1097,28 +1097,59 @@ class TicketView(discord.ui.View):
         if existing:
             await interaction.response.send_message(f"Lo udah punya ticket aktif: {existing.mention} bro!", ephemeral=True)
             return
+
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             interaction.user:   discord.PermissionOverwrite(read_messages=True, send_messages=True),
             guild.me:           discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
         }
+        # Whitelist role — otomatis bisa baca & kirim pesan di channel ticket
+        for role_id in config.get("whitelist_roles", []):
+            role = guild.get_role(int(role_id))
+            if role:
+                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+
         cat = guild.get_channel(int(config["category_id"])) if config.get("category_id") else None
         ch  = await guild.create_text_channel(
             f"ticket-{interaction.user.name}",
             overwrites=overwrites, category=cat,
             topic=f"Ticket milik {interaction.user}"
         )
-        em         = dark_red_embed(f"🎫 Ticket - {interaction.user.display_name}", config.get("description", "Hai! Cerita masalah lo di sini, tim kami bakal bantu ASAP!"))
-        close_view = TicketCloseView()
+
+        em = dark_red_embed(
+            f"🎫 Ticket - {interaction.user.display_name}",
+            config.get("description", "Hai! Cerita masalah lo di sini, tim kami bakal bantu ASAP!")
+        )
+        # Thumbnail & image dari attachment yang di-upload saat setup
+        if config.get("thumbnail_url"):
+            em.set_thumbnail(url=config["thumbnail_url"])
+        if config.get("image_url"):
+            em.set_image(url=config["image_url"])
+        # Tampilkan role staff di embed
+        role_mentions = [guild.get_role(int(rid)).mention for rid in config.get("whitelist_roles", []) if guild.get_role(int(rid))]
+        if role_mentions:
+            em.add_field(name="👥 Staff yang bisa bantu", value=" ".join(role_mentions), inline=False)
+
+        close_view = TicketCloseView(config)
         await ch.send(content=interaction.user.mention, embed=em, view=close_view)
         await interaction.response.send_message(f"Ticket lo udah kebuka bro! {ch.mention}", ephemeral=True)
 
 class TicketCloseView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, panel_config=None):
         super().__init__(timeout=None)
+        self.panel_config = panel_config or {}
 
     @discord.ui.button(label="Tutup Ticket", emoji="🔒", style=discord.ButtonStyle.danger, custom_id="ticket_close")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Hanya pembuka ticket, whitelist role, atau admin yang bisa tutup
+        whitelist_ids   = self.panel_config.get("whitelist_roles", [])
+        user_role_ids   = [str(r.id) for r in interaction.user.roles]
+        is_ticket_owner = interaction.channel.name == f"ticket-{interaction.user.name.lower()}"
+        is_whitelisted  = any(rid in user_role_ids for rid in whitelist_ids)
+        is_admin        = interaction.user.guild_permissions.administrator
+        if not (is_ticket_owner or is_whitelisted or is_admin):
+            await interaction.response.send_message("❌ Lo tidak punya izin untuk menutup ticket ini!", ephemeral=True)
+            return
         em = dark_red_embed("🔒 Ticket Ditutup", f"Ticket ditutup oleh {interaction.user.mention}.\nChannel akan dihapus dalam 5 detik.")
         await interaction.response.send_message(embed=em)
         await asyncio.sleep(5)
@@ -1979,29 +2010,39 @@ class MaintenanceView(discord.ui.View):
         await interaction.response.send_message(embed=em, ephemeral=True)
 
 async def broadcast_maintenance(active: bool, reason: str):
-    """Kirim notif maintenance ke channel announce semua server."""
+    """
+    Kirim notif maintenance ke channel yang sudah dipilih tiap server via /setmaintenancechannel.
+    Kalau belum diset, auto-detect channel announce/general, fallback ke channel pertama.
+    """
     config = get_config()
-    default_announce_ch_id = config.get("maintenance_announce", {}).get("channel_id")
 
     for guild in bot.guilds:
+        gid       = str(guild.id)
         target_ch = None
-        # Coba dari config dulu
-        if default_announce_ch_id:
-            target_ch = guild.get_channel(int(default_announce_ch_id))
-        # Auto-detect channel announce
+
+        # Prioritas 1: channel yang dipilih admin server via /setmaintenancechannel
+        per_guild_ch_id = config.get(gid, {}).get("maintenance_channel_id")
+        if per_guild_ch_id:
+            target_ch = guild.get_channel(int(per_guild_ch_id))
+
+        # Prioritas 2: auto-detect nama channel umum
         if not target_ch:
-            for name in ["announce", "pengumuman", "announcement", "general", "umum"]:
-                target_ch = discord.utils.get(guild.text_channels, name=name)
-                if target_ch:
+            for name in ["announce", "pengumuman", "announcement", "general", "umum", "bot-notif", "notifikasi"]:
+                ch = discord.utils.get(guild.text_channels, name=name)
+                if ch and ch.permissions_for(guild.me).send_messages:
+                    target_ch = ch
                     break
-        # Fallback ke channel pertama yang bisa di-write
+
+        # Prioritas 3: fallback channel pertama yang bisa ditulis
         if not target_ch:
             for ch in guild.text_channels:
                 if ch.permissions_for(guild.me).send_messages:
                     target_ch = ch
                     break
+
         if not target_ch:
             continue
+
         try:
             if active:
                 em = discord.Embed(
@@ -2010,7 +2051,8 @@ async def broadcast_maintenance(active: bool, reason: str):
                         f"Hei **{guild.name}**! 👋\n\n"
                         f"Bot **{bot.user.display_name}** saat ini sedang dalam mode **MAINTENANCE**.\n\n"
                         f"**Alasan:** {reason}\n\n"
-                        "Mohon bersabar ya, bot akan kembali normal secepatnya! 🙏"
+                        "Mohon bersabar ya, bot akan kembali normal secepatnya! 🙏\n\n"
+                        f"*Ingin ganti channel notifikasi? Gunakan `/setmaintenancechannel`*"
                     ),
                     color=0xFF6600
                 )
@@ -2032,6 +2074,138 @@ async def broadcast_maintenance(active: bool, reason: str):
         except Exception as e:
             print(f"Broadcast maintenance error di {guild.name}: {e}")
         await asyncio.sleep(0.5)  # Rate limit protection
+
+# ===================== ON GUILD JOIN =====================
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    """Kirim embed sambutan + info fitur bot saat join server baru."""
+    target_ch = None
+    for name in ["general", "umum", "chat", "lounge", "welcome", "bot", "bot-commands"]:
+        ch = discord.utils.get(guild.text_channels, name=name)
+        if ch and ch.permissions_for(guild.me).send_messages:
+            target_ch = ch
+            break
+    if not target_ch and guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
+        target_ch = guild.system_channel
+    if not target_ch:
+        for ch in guild.text_channels:
+            if ch.permissions_for(guild.me).send_messages:
+                target_ch = ch
+                break
+    if not target_ch:
+        return
+
+    # Notif ke owner bot
+    if OWNER_ID:
+        try:
+            owner = await bot.fetch_user(OWNER_ID)
+            owner_em = discord.Embed(
+                title="🆕 Bot Masuk Server Baru!",
+                description=(
+                    f"**🏠 Server:** {guild.name}\n"
+                    f"**🆔 Server ID:** `{guild.id}`\n"
+                    f"**👥 Member:** {guild.member_count} orang\n"
+                    f"**👑 Owner Server:** {guild.owner} (`{guild.owner_id}`)\n"
+                    f"**📅 Dibuat:** {guild.created_at.strftime('%d/%m/%Y')}\n"
+                    f"**🤖 Total Server Bot:** {len(bot.guilds)}"
+                ),
+                color=0x00FF88
+            )
+            if guild.icon:
+                owner_em.set_thumbnail(url=guild.icon.url)
+            owner_em.set_footer(text="RepublikDooms Bot System")
+            owner_em.timestamp = datetime.datetime.now(tz=WIB)
+            await owner.send(embed=owner_em)
+        except Exception as e:
+            print(f"Gagal DM owner saat join guild: {e}")
+
+    maint        = get_maintenance()
+    maint_status = "🔴 Sedang Maintenance" if maint.get("active") else "🟢 Online & Normal"
+    maint_reason = f"\n**Alasan:** {maint.get('reason', '-')}" if maint.get("active") else ""
+
+    em = discord.Embed(
+        title=f"👋 Halo {guild.name}! Makasih udah invite gw!",
+        description=(
+            f"Gw **{bot.user.display_name}**, bot serbaguna buatan **RepublikDooms**!\n\n"
+            "Siap bantu server lo jadi lebih seru dan terorganisir. "
+            "Berikut fitur-fitur yang bisa lo pakai:"
+        ),
+        color=DARK_RED
+    )
+    if bot.user.display_avatar:
+        em.set_thumbnail(url=bot.user.display_avatar.url)
+    em.add_field(
+        name="🎣 Fishing & Mini Game",
+        value=(
+            "`!Doom fish` / `/fish` — Mancing & jual ikan\n"
+            "`!Doom tebak` / `/tebak` — Tebak-tebakan berhadiah koin\n"
+            "`!Doom coins` / `/coins` — Cek saldo koin\n"
+            "`!Doom leaderboard` / `/leaderboard` — Ranking level"
+        ),
+        inline=False
+    )
+    em.add_field(
+        name="⚠️ Moderasi",
+        value=(
+            "`!Doom warn` — Warn member\n"
+            "`!Doom kick` / `ban` / `timeout` — Moderasi member\n"
+            "`!Doom clear` — Hapus pesan massal\n"
+            "`!Doom addrole` / `removerole` — Kelola role"
+        ),
+        inline=False
+    )
+    em.add_field(
+        name="🎉 Event & Giveaway",
+        value=(
+            "`!Doom giveaway` / `/giveaway` — Buat giveaway\n"
+            "`!Doom event` / `/event` — Umumkan event dengan timer otomatis\n"
+            "`!Doom sticky` — Sticky message di channel"
+        ),
+        inline=False
+    )
+    em.add_field(
+        name="🎫 Ticket & Role",
+        value=(
+            "`/ticket` — Setup panel ticket support\n"
+            "`/reactionrole` — Button role picker\n"
+            "`/leveling` — Setup sistem leveling & XP"
+        ),
+        inline=False
+    )
+    em.add_field(
+        name="🛠️ Utilitas",
+        value=(
+            "`!Doom autoresponse` — Auto-reply trigger kata\n"
+            "`!Doom embed` — Kirim embed custom\n"
+            "`!Doom vote` — Vote bot & dapet reward koin\n"
+            "`!Doom setlang` / `/setlang` — Ganti bahasa bot (en/de/ar/th/ja)"
+        ),
+        inline=False
+    )
+    em.add_field(
+        name="👑 Premium",
+        value=(
+            "Beberapa fitur bisa dikunci khusus member premium.\n"
+            "`!Doom premium` — Info & cara order premium"
+        ),
+        inline=False
+    )
+    em.add_field(
+        name="📡 Status Bot & Notifikasi Maintenance",
+        value=(
+            f"**Status Saat Ini:** {maint_status}{maint_reason}\n\n"
+            "Gunakan `/setmaintenancechannel` untuk pilih channel yang nerima notif saat bot maintenance/selesai maintenance."
+        ),
+        inline=False
+    )
+    em.set_footer(text=f"Prefix: !Doom | Juga support Slash Commands! | {len(bot.guilds)} server")
+    em.timestamp = datetime.datetime.now(tz=WIB)
+
+    try:
+        await target_ch.send(embed=em)
+    except Exception as e:
+        print(f"Gagal kirim welcome embed di {guild.name}: {e}")
 
 async def maintenance_panel(ctx):
     maint  = get_maintenance()
@@ -2771,6 +2945,7 @@ async def help_cmd(ctx):
     em.add_field(name="👑 Premium",   value="`premium` — Lihat info & order premium",                  inline=False)
     em.add_field(name="🗳️ Vote",      value="`vote` — Link vote Top.gg | `claimvote` — Claim reward vote", inline=False)
     em.add_field(name="🌐 Bahasa",    value="`setlang [kode]` — Ganti bahasa bot (en/de/ar/th/ja)", inline=False)
+    em.add_field(name="📡 Notifikasi", value="`setmaintenancechannel #channel` — Pilih channel notif maintenance *(owner bot only)*", inline=False)
     em.set_footer(text="Prefix: !Doom | Semua command bisa pake slash juga!")
     await ctx.reply(embed=em)
 
@@ -2793,18 +2968,119 @@ async def slash_fish(interaction: discord.Interaction):
     await interaction.response.send_message(embed=em, view=FishingMainView(interaction.user.id))
 
 @tree.command(name="ticket", description="Setup panel ticket")
-@app_commands.describe(judul="Judul embed", deskripsi="Deskripsi panel", button_label="Label button", button_emoji="Emoji button", kategori="ID kategori")
+@app_commands.describe(
+    judul="Judul embed panel ticket",
+    deskripsi="Deskripsi panel ticket",
+    button_label="Label button buka ticket",
+    button_emoji="Emoji button",
+    kategori="ID kategori channel ticket"
+)
 @app_commands.default_permissions(administrator=True)
 async def slash_ticket(interaction: discord.Interaction, judul: str = "🎫 Support Ticket", deskripsi: str = "Klik button untuk buka ticket!", button_label: str = "Buka Ticket", button_emoji: str = "🎫", kategori: str = None):
     if await check_premium_gate_slash(interaction, "ticket"): return
-    panel_id = str(int(time.time()))
-    panel_config = {"panel_id": panel_id, "button_label": button_label, "button_emoji": button_emoji, "description": deskripsi, "category_id": kategori}
-    em   = dark_red_embed(judul, deskripsi)
+
+    panel_id     = str(int(time.time()))
+    panel_config = {
+        "panel_id":       panel_id,
+        "button_label":   button_label,
+        "button_emoji":   button_emoji,
+        "description":    deskripsi,
+        "category_id":    kategori,
+        "whitelist_roles": [],
+        "thumbnail_url":  None,
+        "image_url":      None,
+    }
+
+    def check_author(m):
+        return m.author.id == interaction.user.id and m.channel.id == interaction.channel_id
+
+    # ── LANGKAH 1: Tanya whitelist role ──────────────────────────────────────
+    await interaction.response.send_message(
+        embed=discord.Embed(
+            title="🎫 Setup Ticket — Langkah 1/2: Whitelist Role",
+            description=(
+                "Mention **role-role** yang bisa lihat & urus ticket di server ini.\n\n"
+                "**Contoh:** `@Staff @Moderator @Support`\n\n"
+                "Ketik `skip` kalau tidak mau set whitelist role.\n"
+                "*(Timeout 60 detik)*"
+            ),
+            color=DARK_RED
+        ),
+        ephemeral=True
+    )
+    try:
+        msg_role = await bot.wait_for("message", check=check_author, timeout=60)
+        if msg_role.content.strip().lower() != "skip":
+            panel_config["whitelist_roles"] = [str(r.id) for r in msg_role.role_mentions]
+        try:
+            await msg_role.delete()
+        except:
+            pass
+    except asyncio.TimeoutError:
+        pass  # lanjut tanpa whitelist role
+
+    # ── LANGKAH 2: Tanya gambar (thumbnail & image via attachment) ────────────
+    await interaction.followup.send(
+        embed=discord.Embed(
+            title="🎫 Setup Ticket — Langkah 2/2: Gambar (Opsional)",
+            description=(
+                "Upload gambar sebagai **attachment Discord** untuk embed ticket.\n\n"
+                "• **1 gambar** → jadi **thumbnail** (pojok kanan atas embed)\n"
+                "• **2 gambar** → gambar pertama jadi **thumbnail**, kedua jadi **gambar besar**\n\n"
+                "Ketik `skip` kalau tidak mau tambah gambar.\n"
+                "*(Timeout 60 detik)*"
+            ),
+            color=DARK_RED
+        ),
+        ephemeral=True
+    )
+    try:
+        msg_img = await bot.wait_for("message", check=check_author, timeout=60)
+        if msg_img.content.strip().lower() != "skip":
+            valid_exts = [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+            attachments = [a for a in msg_img.attachments if any(a.filename.lower().endswith(e) for e in valid_exts)]
+            if len(attachments) >= 1:
+                panel_config["thumbnail_url"] = attachments[0].url
+            if len(attachments) >= 2:
+                panel_config["image_url"] = attachments[1].url
+        try:
+            await msg_img.delete()
+        except:
+            pass
+    except asyncio.TimeoutError:
+        pass  # lanjut tanpa gambar
+
+    # ── Build & kirim panel ───────────────────────────────────────────────────
+    em = dark_red_embed(judul, deskripsi)
+    if panel_config.get("thumbnail_url"):
+        em.set_thumbnail(url=panel_config["thumbnail_url"])
+    if panel_config.get("image_url"):
+        em.set_image(url=panel_config["image_url"])
+
     view = TicketView(panel_config)
-    await interaction.response.send_message(embed=em, view=view)
+    await interaction.channel.send(embed=em, view=view)
+
     td = get_tickets()
     td.setdefault("panels", {})[panel_id] = panel_config
     save_tickets(td)
+
+    # Ringkasan setup
+    roles_set  = len(panel_config["whitelist_roles"])
+    thumb_set  = "✅" if panel_config.get("thumbnail_url") else "➖"
+    image_set  = "✅" if panel_config.get("image_url") else "➖"
+    await interaction.followup.send(
+        embed=discord.Embed(
+            title="✅ Panel Ticket Berhasil Dibuat!",
+            description=(
+                f"**👥 Whitelist Role:** {roles_set} role diset\n"
+                f"**🖼️ Thumbnail:** {thumb_set}\n"
+                f"**🖼️ Gambar Besar:** {image_set}\n\n"
+                "Panel ticket sudah aktif di channel ini!"
+            ),
+            color=0x00FF88
+        ),
+        ephemeral=True
+    )
 
 @tree.command(name="leveling", description="Setup fitur leveling")
 @app_commands.default_permissions(administrator=True)
@@ -3190,6 +3466,96 @@ async def slash_setlang(interaction: discord.Interaction, language: str = None):
         color=0x00FF88
     )
     await interaction.response.send_message(embed=em, ephemeral=True)
+
+# ===================== SET MAINTENANCE CHANNEL =====================
+
+@tree.command(name="setmaintenancechannel", description="Pilih channel untuk nerima notifikasi maintenance bot")
+@app_commands.describe(channel="Channel tujuan notifikasi maintenance")
+@app_commands.default_permissions(administrator=True)
+async def slash_setmaintenancechannel(interaction: discord.Interaction, channel: discord.TextChannel):
+    """Admin server bisa pilih channel notif maintenance untuk server mereka sendiri."""
+    if not channel.permissions_for(interaction.guild.me).send_messages:
+        await interaction.response.send_message(
+            embed=dark_red_embed("❌ Bot Tidak Punya Akses", f"Bot tidak punya izin kirim pesan di {channel.mention}!"),
+            ephemeral=True
+        )
+        return
+    config = get_config()
+    gid    = str(interaction.guild.id)
+    config.setdefault(gid, {})["maintenance_channel_id"] = str(channel.id)
+    save_config(config)
+    em = discord.Embed(
+        title="📡 Channel Notifikasi Maintenance Diset!",
+        description=(
+            f"✅ Channel **{channel.mention}** akan menerima notifikasi saat bot:\n\n"
+            "• 🔧 **Masuk maintenance** (beserta alasannya)\n"
+            "• ✅ **Selesai maintenance** (bot kembali online)\n\n"
+            "Lo bisa ubah channel ini kapan saja dengan jalankan command ini lagi."
+        ),
+        color=0x00FF88
+    )
+    em.set_footer(text=f"Server: {interaction.guild.name} | RepublikDooms Bot System")
+    await interaction.response.send_message(embed=em, ephemeral=True)
+    # Kirim konfirmasi ke channel yang dipilih
+    try:
+        notif_em = discord.Embed(
+            title="📡 Channel Ini Dipilih untuk Notifikasi Maintenance",
+            description=(
+                f"Channel ini akan menerima notifikasi dari bot **{bot.user.display_name}** saat:\n\n"
+                "• 🔧 Bot masuk mode **Maintenance**\n"
+                "• ✅ Bot kembali **Online** setelah maintenance\n\n"
+                "*Pengaturan ini dilakukan oleh owner bot.*"
+            ),
+            color=DARK_RED
+        )
+        notif_em.set_footer(text="RepublikDooms Bot System")
+        notif_em.timestamp = datetime.datetime.now(tz=WIB)
+        await channel.send(embed=notif_em)
+    except:
+        pass
+
+@bot.command(name="setmaintenancechannel")
+@commands.has_permissions(administrator=True)
+async def prefix_setmaintenancechannel(ctx, channel: discord.TextChannel = None):
+    """Admin server bisa pilih channel notif maintenance untuk server mereka sendiri."""
+    if not channel:
+        await ctx.reply("❓ Format: `!Doom setmaintenancechannel #channel`")
+        return
+    if not channel.permissions_for(ctx.guild.me).send_messages:
+        await ctx.reply(embed=dark_red_embed("❌ Bot Tidak Punya Akses", f"Bot tidak punya izin kirim pesan di {channel.mention}!"))
+        return
+    config = get_config()
+    gid    = str(ctx.guild.id)
+    config.setdefault(gid, {})["maintenance_channel_id"] = str(channel.id)
+    save_config(config)
+    em = discord.Embed(
+        title="📡 Channel Notifikasi Maintenance Diset!",
+        description=(
+            f"✅ Channel **{channel.mention}** akan menerima notifikasi saat bot:\n\n"
+            "• 🔧 **Masuk maintenance** (beserta alasannya)\n"
+            "• ✅ **Selesai maintenance** (bot kembali online)\n\n"
+            "Lo bisa ubah channel ini kapan saja dengan jalankan command ini lagi."
+        ),
+        color=0x00FF88
+    )
+    em.set_footer(text=f"Server: {ctx.guild.name} | RepublikDooms Bot System")
+    await ctx.reply(embed=em)
+    try:
+        notif_em = discord.Embed(
+            title="📡 Channel Ini Dipilih untuk Notifikasi Maintenance",
+            description=(
+                f"Channel ini akan menerima notifikasi dari bot **{bot.user.display_name}** saat:\n\n"
+                "• 🔧 Bot masuk mode **Maintenance**\n"
+                "• ✅ Bot kembali **Online** setelah maintenance\n\n"
+                "*Pengaturan ini dilakukan oleh owner bot.*"
+            ),
+            color=DARK_RED
+        )
+        notif_em.set_footer(text="RepublikDooms Bot System")
+        notif_em.timestamp = datetime.datetime.now(tz=WIB)
+        await channel.send(embed=notif_em)
+    except:
+        pass
 
 # ===================== VOTE TOP.GG COMMANDS =====================
 
